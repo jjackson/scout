@@ -36,6 +36,9 @@ dependencies = [
     # Security / HTML sanitization
     "bleach>=6.0",
 
+    # Caching
+    "redis>=5.0",
+
     # Utilities
     "python-dotenv>=1.0",
 

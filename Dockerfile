@@ -18,14 +18,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Set work directory
 WORKDIR /app
 
-# Copy dependency files
-COPY pyproject.toml README.md ./
+# Copy project
+COPY . .
 
 # Install dependencies (production only, no dev dependencies)
 RUN uv pip install --system -e .
-
-# Copy project
-COPY . .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

@@ -20,6 +20,7 @@ import os
 from typing import TYPE_CHECKING
 
 import chainlit as cl
+from asgiref.sync import sync_to_async
 from django.conf import settings as django_settings
 from django.core.cache import cache
 
@@ -33,6 +34,7 @@ AUTH_MAX_ATTEMPTS = 5
 AUTH_LOCKOUT_SECONDS = 300  # 5 minutes
 
 
+@sync_to_async
 def check_auth_rate_limit(username: str) -> bool:
     """
     Check if the user is rate limited for authentication attempts.
@@ -48,6 +50,7 @@ def check_auth_rate_limit(username: str) -> bool:
     return attempts >= AUTH_MAX_ATTEMPTS
 
 
+@sync_to_async
 def record_auth_attempt(username: str, success: bool) -> None:
     """
     Record an authentication attempt for rate limiting.
@@ -87,7 +90,7 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
     from apps.users.models import User
 
     # Check rate limit before processing
-    if check_auth_rate_limit(username):
+    if await check_auth_rate_limit(username):
         logger.warning("Rate limit exceeded for user: %s", username)
         return None
 
@@ -99,7 +102,7 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
         if username == dev_username and password == dev_password:
             # Try to find the dev user
             try:
-                user = User.objects.get(email=dev_username)
+                user = await User.objects.aget(email=dev_username)
             except User.DoesNotExist:
                 logger.warning(
                     "Dev user %s not found in database. Create the user first.",
@@ -110,11 +113,11 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
             # Check is_active to prevent disabled users from logging in
             if not user.is_active:
                 logger.warning("Dev user %s is inactive, denying access", dev_username)
-                record_auth_attempt(username, False)
+                await record_auth_attempt(username, False)
                 return None
 
             logger.info("Dev user authenticated: %s", username)
-            record_auth_attempt(username, True)
+            await record_auth_attempt(username, True)
             return cl.User(
                 identifier=str(user.id),
                 metadata={
@@ -125,20 +128,20 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
             )
 
     # Standard Django authentication
-    user = authenticate(username=username, password=password)
+    user = await sync_to_async(authenticate)(username=username, password=password)
 
     if user is None:
         logger.warning("Authentication failed for user: %s", username)
-        record_auth_attempt(username, False)
+        await record_auth_attempt(username, False)
         return None
 
     if not user.is_active:
         logger.warning("Inactive user attempted login: %s", username)
-        record_auth_attempt(username, False)
+        await record_auth_attempt(username, False)
         return None
 
     logger.info("User authenticated: %s", username)
-    record_auth_attempt(username, True)
+    await record_auth_attempt(username, True)
     return cl.User(
         identifier=str(user.id),
         metadata={
@@ -149,8 +152,7 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
     )
 
 
-@cl.oauth_callback
-async def oauth_callback(
+async def _oauth_callback(
     provider_id: str,
     token: str,
     raw_user_data: dict,
@@ -187,7 +189,7 @@ async def oauth_callback(
 
     try:
         # Look up the Django user via allauth's SocialAccount
-        social_account = SocialAccount.objects.select_related("user").get(
+        social_account = await SocialAccount.objects.select_related("user").aget(
             provider=provider_id,
             uid=str(provider_user_id),
         )
@@ -240,7 +242,7 @@ async def oauth_callback(
 
         # Use get_or_create to prevent race conditions when two OAuth logins
         # happen simultaneously for the same user
-        user, created = User.objects.get_or_create(
+        user, created = await User.objects.aget_or_create(
             email=email,
             defaults={
                 "first_name": first_name,
@@ -253,7 +255,7 @@ async def oauth_callback(
             logger.info("Found existing user with email %s, linking social account", email)
 
         # Create the SocialAccount link, using get_or_create to handle race conditions
-        social_account, created = SocialAccount.objects.get_or_create(
+        social_account, created = await SocialAccount.objects.aget_or_create(
             provider=provider_id,
             uid=str(provider_user_id),
             defaults={"user": user, "extra_data": raw_user_data}
@@ -263,7 +265,7 @@ async def oauth_callback(
         else:
             # Update extra_data if the account already exists
             social_account.extra_data = raw_user_data
-            social_account.save(update_fields=["extra_data"])
+            await social_account.asave(update_fields=["extra_data"])
             logger.info("Updated existing social account link: %s -> %s", email, provider_id)
 
         return cl.User(
@@ -358,7 +360,7 @@ async def header_auth_callback(headers: dict) -> cl.User | None:
     try:
         # Look up user by ID or email
         if user_id:
-            user = User.objects.get(pk=user_id)
+            user = await User.objects.aget(pk=user_id)
         else:
             # Auto-provision user from headers if allowed
             auto_provision = os.environ.get("AUTH_HEADER_AUTO_PROVISION", "false").lower() == "true"
@@ -369,7 +371,7 @@ async def header_auth_callback(headers: dict) -> cl.User | None:
                 last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
 
                 # Use get_or_create to handle race conditions
-                user, created = User.objects.get_or_create(
+                user, created = await User.objects.aget_or_create(
                     email=user_email,
                     defaults={
                         "first_name": first_name,
@@ -379,7 +381,7 @@ async def header_auth_callback(headers: dict) -> cl.User | None:
                 if created:
                     logger.info("Auto-provisioned user from header auth: %s", user_email)
             else:
-                user = User.objects.get(email=user_email)
+                user = await User.objects.aget(email=user_email)
 
         if not user.is_active:
             logger.warning("Header auth: inactive user %s", user.email)
@@ -406,6 +408,20 @@ async def header_auth_callback(headers: dict) -> cl.User | None:
     except Exception as e:
         logger.exception("Error during header auth: %s", e)
         return None
+
+
+# Conditionally register OAuth callback only if providers are configured
+# Chainlit checks for OAUTH_*_CLIENT_ID env vars
+_oauth_providers = ["GOOGLE", "GITHUB", "GITLAB", "AZURE_AD", "OKTA", "AUTH0", "DESCOPE"]
+_oauth_configured = any(
+    os.environ.get(f"OAUTH_{provider}_CLIENT_ID")
+    for provider in _oauth_providers
+)
+
+if _oauth_configured:
+    oauth_callback = cl.oauth_callback(_oauth_callback)
+else:
+    logger.debug("OAuth not configured, skipping oauth_callback registration")
 
 
 def get_django_user(cl_user: cl.User) -> "User | None":
