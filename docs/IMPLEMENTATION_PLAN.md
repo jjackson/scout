@@ -35,54 +35,54 @@ and *when* — the specs tell you *how*.
 **Goal**: Django project running with all models defined, admin interface, and data dictionary generation working.
 
 ### 1.1 Django Project Scaffold
-- Create project with `config/settings/{base,development,production}.py` structure
-- Configure PostgreSQL as the platform database
-- Set up `pyproject.toml` with all dependencies (see base spec Section 11)
-- Create `.env.example` with required environment variables
-- Create `Dockerfile` and `docker-compose.yml` with platform-db and api services (see base spec Section 10)
+- [x] Create project with `config/settings/{base,development,production}.py` structure
+- [x] Configure PostgreSQL as the platform database
+- [x] Set up `pyproject.toml` with all dependencies (see base spec Section 11)
+- [x] Create `.env.example` with required environment variables
+- [x] Create `Dockerfile` and `docker-compose.yml` with platform-db and api services (see base spec Section 10)
 
 ### 1.2 Core Models — `apps/projects/`
 Create the models from base spec Section 2:
-- `Project` — with encrypted DB credentials (Fernet), connection params, agent config
-- `ProjectMembership` — user-project link with roles (viewer, analyst, admin)
-- `ProjectRole` — TextChoices enum
-- `SavedQuery` — for saving and sharing SQL queries
-- `ConversationLog` — conversation history for audit
+- [x] `Project` — with encrypted DB credentials (Fernet), connection params, agent config
+- [x] `ProjectMembership` — user-project link with roles (viewer, analyst, admin)
+- [x] `ProjectRole` — TextChoices enum
+- [x] `SavedQuery` — for saving and sharing SQL queries
+- [x] `ConversationLog` — conversation history for audit
 
 Key details:
-- DB credentials use Fernet encryption via `DB_CREDENTIAL_KEY` env var
-- `Project.get_connection_params()` returns psycopg2-compatible dict with `search_path` and `statement_timeout`
-- `allowed_tables` and `excluded_tables` are JSONFields for table-level access control
+- [x] DB credentials use Fernet encryption via `DB_CREDENTIAL_KEY` env var
+- [x] `Project.get_connection_params()` returns psycopg2-compatible dict with `search_path` and `statement_timeout`
+- [x] `allowed_tables` and `excluded_tables` are JSONFields for table-level access control
 
 ### 1.3 Knowledge Models — `apps/knowledge/`
 Create the models from addendum 2 Section B1:
-- `TableKnowledge` — enriched table metadata (description, use cases, data quality notes, column notes, ownership)
-- `CanonicalMetric` — agreed-upon metric definitions with canonical SQL
-- `VerifiedQuery` — query patterns known to produce correct results
-- `BusinessRule` — institutional knowledge and gotchas
-- `AgentLearning` — agent-discovered corrections (from addendum 2 Section B2)
+- [x] `TableKnowledge` — enriched table metadata (description, use cases, data quality notes, column notes, ownership)
+- [x] `CanonicalMetric` — agreed-upon metric definitions with canonical SQL
+- [x] `VerifiedQuery` — query patterns known to produce correct results
+- [x] `BusinessRule` — institutional knowledge and gotchas
+- [x] `AgentLearning` — agent-discovered corrections (from addendum 2 Section B2)
 
 ### 1.4 User Model — `apps/users/`
-- Custom User model (extend AbstractUser)
-- Basic auth setup (will add OAuth later in Phase 4)
+- [x] Custom User model (extend AbstractUser)
+- [x] Basic auth setup (will add OAuth later in Phase 4)
 
 ### 1.5 Admin Interface
-- Register all models with Django admin
-- Custom admin for Project (hide encrypted fields, show connection test button)
-- Custom admin for knowledge models (inline editing, bulk import)
-- Admin action to regenerate data dictionary
+- [x] Register all models with Django admin
+- [x] Custom admin for Project (hide encrypted fields, show connection test button)
+- [x] Custom admin for knowledge models (inline editing, bulk import)
+- [x] Admin action to regenerate data dictionary
 
 ### 1.6 Data Dictionary Generator — `apps/projects/services/data_dictionary.py`
 Implement the `DataDictionaryGenerator` class from base spec Section 3:
-- Introspects PostgreSQL schema via `information_schema` queries
-- Extracts: tables, columns, types, PKs, FKs, indexes, enums, approximate row counts
-- Fetches sample values (skipping sensitive columns)
-- Respects `allowed_tables` / `excluded_tables`
-- Saves to `Project.data_dictionary` JSONField
-- `render_for_prompt()` formats for system prompt (full detail for ≤15 tables, table listing for larger schemas)
+- [x] Introspects PostgreSQL schema via `information_schema` queries
+- [x] Extracts: tables, columns, types, PKs, FKs, indexes, enums, approximate row counts
+- [x] Fetches sample values (skipping sensitive columns)
+- [x] Respects `allowed_tables` / `excluded_tables`
+- [x] Saves to `Project.data_dictionary` JSONField
+- [x] `render_for_prompt()` formats for system prompt (full detail for ≤15 tables, table listing for larger schemas)
 
 ### 1.7 Knowledge Import Command — `apps/knowledge/management/commands/import_knowledge.py`
-- Bulk import from JSON/YAML files following the directory structure:
+- [x] Bulk import from JSON/YAML files following the directory structure:
   ```
   knowledge/
   ├── tables/*.json
@@ -90,20 +90,20 @@ Implement the `DataDictionaryGenerator` class from base spec Section 3:
   ├── queries/*.sql
   └── business/*.json
   ```
-- Upsert semantics (update existing, create new)
-- `--recreate` flag for fresh start
+- [x] Upsert semantics (update existing, create new)
+- [x] `--recreate` flag for fresh start
 
 ### 1.8 Data Dictionary Command — `apps/projects/management/commands/generate_data_dictionary.py`
 From base spec Section 9:
-- `--project-slug` for single project
-- `--all` for all projects
-- `--dry-run` to print without saving
+- [x] `--project-slug` for single project
+- [x] `--all` for all projects
+- [x] `--dry-run` to print without saving
 
 ### 1.9 Tests
-- Test data dictionary generation against a test PostgreSQL schema
-- Test credential encryption/decryption
-- Test table filtering (allowed/excluded)
-- Test knowledge import command
+- [x] Test data dictionary generation against a test PostgreSQL schema
+- [x] Test credential encryption/decryption
+- [x] Test table filtering (allowed/excluded)
+- [x] Test knowledge import command
 
 ---
 
@@ -113,48 +113,48 @@ From base spec Section 9:
 
 ### 2.1 SQL Validator — `apps/agents/tools/sql_tool.py`
 Implement `SQLValidator` and `SQLValidationError` from base spec Section 4:
-- Parse SQL with sqlglot into AST
-- Reject non-SELECT statements (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, etc.)
-- Reject multiple statements
-- Reject dangerous functions (pg_read_file, dblink, lo_import, etc.)
-- Enforce schema/table allowlist
-- `inject_limit()` — add or cap LIMIT clause
+- [x] Parse SQL with sqlglot into AST
+- [x] Reject non-SELECT statements (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, etc.)
+- [x] Reject multiple statements
+- [x] Reject dangerous functions (pg_read_file, dblink, lo_import, etc.)
+- [x] Enforce schema/table allowlist
+- [x] `inject_limit()` — add or cap LIMIT clause
 
 ### 2.2 SQL Tool — `apps/agents/tools/sql_tool.py`
 Implement `create_sql_tool()` factory from base spec Section 4:
-- Validates query via SQLValidator
-- Injects LIMIT if missing
-- Connects to project DB with read-only session (`conn.set_session(readonly=True)`)
-- Returns structured result: columns, rows, row_count, truncated, sql_executed
-- Add provenance metadata to response (from addendum 2 Section B4):
+- [x] Validates query via SQLValidator
+- [x] Injects LIMIT if missing
+- [x] Connects to project DB with read-only session (`conn.set_session(readonly=True)`)
+- [x] Returns structured result: columns, rows, row_count, truncated, sql_executed
+- [x] Add provenance metadata to response (from addendum 2 Section B4):
   - tables_accessed
   - metric_used (if canonical metric applied)
   - knowledge_applied (list of applied knowledge descriptions)
   - caveats
-- Handle errors: QueryCanceled (timeout), general psycopg2 errors
+- [x] Handle errors: QueryCanceled (timeout), general psycopg2 errors
 
 ### 2.3 Knowledge Retriever — `apps/knowledge/services/retriever.py`
 Implement `KnowledgeRetriever` from addendum 2 Section B1:
-- Always includes: canonical metrics, business rules
-- Includes table knowledge (all if <20 tables, otherwise match on question)
-- Includes top-10 verified query patterns
-- Includes active agent learnings (ordered by confidence)
-- Returns formatted string for system prompt injection
+- [x] Always includes: canonical metrics, business rules
+- [x] Includes table knowledge (all if <20 tables, otherwise match on question)
+- [x] Includes top-10 verified query patterns
+- [x] Includes active agent learnings (ordered by confidence)
+- [x] Returns formatted string for system prompt injection
 
 ### 2.4 Base System Prompt — `apps/agents/prompts/base_system.py`
 From base spec Section 5, plus additions from addendum 2 Sections B4-B5:
-- Core behavior: precision, data-driven, explain reasoning
-- Response format: markdown tables for ≤20 rows, summaries for larger
-- Error handling: explain errors, suggest fixes, never fabricate
-- Provenance requirements: always explain HOW the answer was computed
-- Query explanation: plain English explanation alongside SQL
-- Canonical metric enforcement: MUST use canonical SQL when available
-- Security: SELECT only, schema-scoped
+- [x] Core behavior: precision, data-driven, explain reasoning
+- [x] Response format: markdown tables for ≤20 rows, summaries for larger
+- [x] Error handling: explain errors, suggest fixes, never fabricate
+- [x] Provenance requirements: always explain HOW the answer was computed
+- [x] Query explanation: plain English explanation alongside SQL
+- [x] Canonical metric enforcement: MUST use canonical SQL when available
+- [x] Security: SELECT only, schema-scoped
 
 ### 2.5 Agent State — `apps/agents/graph/state.py`
 From base spec Section 5:
-- `AgentState(TypedDict)` with: messages, project_id, project_name, user_id, user_role
-- Add: `needs_correction: bool`, `retry_count: int`, `correction_context: dict`
+- [x] `AgentState(TypedDict)` with: messages, project_id, project_name, user_id, user_role
+- [x] Add: `needs_correction: bool`, `retry_count: int`, `correction_context: dict`
 
 ### 2.6 Agent Graph — `apps/agents/graph/base.py`
 Build the LangGraph agent with self-correction from base spec Section 5 + addendum 2 Section B2:
@@ -168,35 +168,35 @@ START → agent → should_continue? → tools → check_result → result_ok?
 ```
 
 Nodes:
-- `agent_node` — calls LLM with system prompt (base + project + knowledge + data dictionary)
-- `tool_node` — executes tool calls (ToolNode from langgraph.prebuilt)
-- `check_result_node` — examines tool results for errors (addendum 2 Section B2)
-- `diagnose_and_retry_node` — asks agent to diagnose and fix errors (addendum 2 Section B2)
+- [x] `agent_node` — calls LLM with system prompt (base + project + knowledge + data dictionary)
+- [x] `tool_node` — executes tool calls (ToolNode from langgraph.prebuilt)
+- [x] `check_result_node` — examines tool results for errors (addendum 2 Section B2)
+- [x] `diagnose_and_retry_node` — asks agent to diagnose and fix errors (addendum 2 Section B2)
 
 The `build_agent_graph(project, checkpointer)` function:
-- Creates tools: execute_sql, describe_table (for large schemas), save_learning
-- Binds tools to LLM (ChatAnthropic)
-- Assembles system prompt: base + project.system_prompt + knowledge retriever output + data dictionary
-- Compiles graph with checkpointer
+- [x] Creates tools: execute_sql, describe_table (for large schemas), save_learning
+- [x] Binds tools to LLM (ChatAnthropic)
+- [x] Assembles system prompt: base + project.system_prompt + knowledge retriever output + data dictionary
+- [x] Compiles graph with checkpointer
 
 ### 2.7 Save Learning Tool
 From addendum 2 Section B2:
-- Agent calls this after successfully correcting a query error
-- Persists an `AgentLearning` record
-- Learning gets injected into future prompts via KnowledgeRetriever
+- [x] Agent calls this after successfully correcting a query error
+- [x] Persists an `AgentLearning` record
+- [x] Learning gets injected into future prompts via KnowledgeRetriever
 
 ### 2.8 Describe Table Tool
 From base spec Section 5:
-- For schemas with >15 tables
-- Returns detailed column info for a specific table from the data dictionary
-- Keeps the system prompt small while giving on-demand detail
+- [x] For schemas with >15 tables
+- [x] Returns detailed column info for a specific table from the data dictionary
+- [x] Keeps the system prompt small while giving on-demand detail
 
 ### 2.9 Tests
 Write comprehensive tests FIRST, then implement:
-- **SQL Validator tests**: injection attempts, blocked statements, schema enforcement, multi-statement rejection, dangerous functions, LIMIT injection
-- **SQL Tool tests**: successful query, timeout handling, error handling, read-only enforcement
-- **Knowledge Retriever tests**: correct assembly with various knowledge combinations
-- **Agent end-to-end tests**: simple question → SQL → result, error → retry → success
+- [x] **SQL Validator tests**: injection attempts, blocked statements, schema enforcement, multi-statement rejection, dangerous functions, LIMIT injection
+- [x] **SQL Tool tests**: successful query, timeout handling, error handling, read-only enforcement
+- [x] **Knowledge Retriever tests**: correct assembly with various knowledge combinations
+- [ ] **Agent end-to-end tests**: simple question → SQL → result, error → retry → success
 
 ---
 

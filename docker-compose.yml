@@ -1,0 +1,58 @@
+services:
+  # Platform database (Django models, user data, project config)
+  platform-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: agent_platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${PLATFORM_DB_PASSWORD:-devpassword}
+    volumes:
+      - platform_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d agent_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Django API server
+  api:
+    build: .
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    environment:
+      - DATABASE_URL=postgresql://platform:${PLATFORM_DB_PASSWORD:-devpassword}@platform-db:5432/agent_platform
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DB_CREDENTIAL_KEY=${DB_CREDENTIAL_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-in-production}
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      platform-db:
+        condition: service_healthy
+
+  # Chainlit frontend
+  chainlit:
+    build: .
+    command: chainlit run chainlit_app/app.py --host 0.0.0.0 --port 8501
+    environment:
+      - DATABASE_URL=postgresql://platform:${PLATFORM_DB_PASSWORD:-devpassword}@platform-db:5432/agent_platform
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DB_CREDENTIAL_KEY=${DB_CREDENTIAL_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:-dev-chainlit-secret}
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+      - platform-db
+
+volumes:
+  platform_data:
