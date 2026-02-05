@@ -21,6 +21,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import chainlit as cl
+from asgiref.sync import sync_to_async
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -78,7 +79,7 @@ async def on_chat_start() -> None:
         return
 
     # Get the Django user
-    django_user = get_django_user(user)
+    django_user = await get_django_user(user)
     if not django_user:
         await cl.Message(
             content="User account not found. Please contact an administrator.",
@@ -91,11 +92,15 @@ async def on_chat_start() -> None:
     cl.user_session.set("django_user_email", django_user.email)
 
     # Load user's projects
-    memberships = ProjectMembership.objects.filter(
-        user=django_user
-    ).select_related("project").order_by("project__name")
+    memberships = await sync_to_async(
+        lambda: list(
+            ProjectMembership.objects.filter(user=django_user)
+            .select_related("project")
+            .order_by("project__name")
+        )
+    )()
 
-    if not memberships.exists():
+    if not memberships:
         await cl.Message(
             content=(
                 "You don't have access to any projects yet. "
@@ -222,7 +227,7 @@ async def setup_project(project_id: str) -> bool:
 
     try:
         # Load the project from the database
-        project = Project.objects.get(pk=project_id)
+        project = await Project.objects.aget(pk=project_id)
     except Project.DoesNotExist:
         await cl.Message(
             content="Project not found. It may have been deleted.",
@@ -239,7 +244,7 @@ async def setup_project(project_id: str) -> bool:
     if django_user_id:
         from apps.users.models import User
         try:
-            django_user = User.objects.get(pk=django_user_id)
+            django_user = await User.objects.aget(pk=django_user_id)
         except User.DoesNotExist:
             pass
 

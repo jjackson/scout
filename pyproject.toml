@@ -39,6 +39,9 @@ dependencies = [
     # Caching
     "redis>=5.0",
 
+    # Async database (required by Chainlit data layer)
+    "asyncpg>=0.29",
+
     # Utilities
     "python-dotenv>=1.0",
 

@@ -424,7 +424,7 @@ else:
     logger.debug("OAuth not configured, skipping oauth_callback registration")
 
 
-def get_django_user(cl_user: cl.User) -> "User | None":
+async def get_django_user(cl_user: cl.User) -> "User | None":
     """
     Retrieve the Django User model instance from a Chainlit User.
 
@@ -440,7 +440,7 @@ def get_django_user(cl_user: cl.User) -> "User | None":
     from apps.users.models import User
 
     try:
-        return User.objects.get(pk=cl_user.identifier)
+        return await User.objects.aget(pk=cl_user.identifier)
     except User.DoesNotExist:
         logger.error("Django user not found for Chainlit user: %s", cl_user.identifier)
         return None
