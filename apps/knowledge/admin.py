@@ -140,22 +140,53 @@ class BusinessRuleAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+class ConfidenceRangeFilter(admin.SimpleListFilter):
+    """Filter learnings by confidence score ranges."""
+
+    title = "confidence range"
+    parameter_name = "confidence_range"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("high", "High (0.8 - 1.0)"),
+            ("medium", "Medium (0.5 - 0.8)"),
+            ("low", "Low (0.0 - 0.5)"),
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value() == "high":
+            return queryset.filter(confidence_score__gte=0.8)
+        elif self.value() == "medium":
+            return queryset.filter(confidence_score__gte=0.5, confidence_score__lt=0.8)
+        elif self.value() == "low":
+            return queryset.filter(confidence_score__lt=0.5)
+        return queryset
+
+
 @admin.register(AgentLearning)
 class AgentLearningAdmin(admin.ModelAdmin):
-    """Admin interface for AgentLearning model."""
+    """Admin interface for AgentLearning model with curation workflow."""
 
     list_display = [
         "description_short",
         "project",
         "category",
-        "confidence_score",
+        "confidence_badge",
         "times_applied",
         "is_active",
+        "promoted_to",
         "created_at",
     ]
-    list_filter = ["project", "category", "is_active", "promoted_to"]
-    search_fields = ["description", "original_error"]
-    actions = ["promote_to_business_rule", "promote_to_verified_query", "deactivate"]
+    list_filter = ["project", "category", "is_active", "promoted_to", ConfidenceRangeFilter]
+    search_fields = ["description", "original_error", "original_sql", "corrected_sql"]
+    actions = [
+        "approve_learnings",
+        "reject_learnings",
+        "promote_to_business_rule",
+        "promote_to_verified_query",
+        "increase_confidence",
+        "decrease_confidence",
+    ]
 
     fieldsets = (
         (None, {"fields": ("project", "description", "category")}),
@@ -189,40 +220,83 @@ class AgentLearningAdmin(admin.ModelAdmin):
     def description_short(self, obj):
         return obj.description[:80] + "..." if len(obj.description) > 80 else obj.description
 
+    @admin.display(description="Confidence")
+    def confidence_badge(self, obj):
+        score = obj.confidence_score
+        if score >= 0.8:
+            color = "green"
+        elif score >= 0.5:
+            color = "orange"
+        else:
+            color = "red"
+        return f'<span style="color: {color}; font-weight: bold;">{score:.0%}</span>'
+
+    confidence_badge.allow_tags = True
+
+    @admin.action(description="Approve learnings (activate + increase confidence)")
+    def approve_learnings(self, request, queryset):
+        count = 0
+        for learning in queryset:
+            learning.is_active = True
+            learning.confidence_score = min(1.0, learning.confidence_score + 0.1)
+            learning.save(update_fields=["is_active", "confidence_score"])
+            count += 1
+        self.message_user(request, f"Approved {count} learnings")
+
+    @admin.action(description="Reject learnings (deactivate)")
+    def reject_learnings(self, request, queryset):
+        count = queryset.update(is_active=False)
+        self.message_user(request, f"Rejected {count} learnings")
+
+    @admin.action(description="Increase confidence (+10%)")
+    def increase_confidence(self, request, queryset):
+        count = 0
+        for learning in queryset:
+            learning.increase_confidence(0.1)
+            count += 1
+        self.message_user(request, f"Increased confidence for {count} learnings")
+
+    @admin.action(description="Decrease confidence (-10%)")
+    def decrease_confidence(self, request, queryset):
+        count = 0
+        for learning in queryset:
+            learning.decrease_confidence(0.1)
+            count += 1
+        self.message_user(request, f"Decreased confidence for {count} learnings")
+
     @admin.action(description="Promote to Business Rule")
     def promote_to_business_rule(self, request, queryset):
+        count = 0
         for learning in queryset:
-            BusinessRule.objects.create(
-                project=learning.project,
-                title=f"From Learning: {learning.description[:100]}",
-                description=learning.description,
-                applies_to_tables=learning.applies_to_tables,
-                created_by=request.user,
-            )
-            learning.promoted_to = "business_rule"
-            learning.is_active = False
-            learning.save()
+            if learning.promoted_to:
+                continue  # Skip already promoted
+            try:
+                learning.promote_to_business_rule(user=request.user)
+                count += 1
+            except ValueError as e:
+                self.message_user(request, f"Error promoting learning: {e}", level="error")
+        self.message_user(request, f"Promoted {count} learnings to Business Rules")
 
     @admin.action(description="Promote to Verified Query")
     def promote_to_verified_query(self, request, queryset):
+        count = 0
+        skipped = 0
         for learning in queryset:
-            if learning.corrected_sql:
-                VerifiedQuery.objects.create(
-                    project=learning.project,
-                    name=f"From Learning: {learning.description[:100]}",
-                    description=learning.description,
-                    sql=learning.corrected_sql,
-                    tables_used=learning.applies_to_tables,
-                    verified_by=request.user,
-                    verified_at=timezone.now(),
-                )
-                learning.promoted_to = "verified_query"
-                learning.is_active = False
-                learning.save()
-
-    @admin.action(description="Deactivate selected learnings")
-    def deactivate(self, request, queryset):
-        queryset.update(is_active=False)
+            if learning.promoted_to:
+                skipped += 1
+                continue
+            if not learning.corrected_sql:
+                skipped += 1
+                continue
+            try:
+                learning.promote_to_verified_query(user=request.user)
+                count += 1
+            except ValueError as e:
+                self.message_user(request, f"Error promoting learning: {e}", level="error")
+        self.message_user(
+            request,
+            f"Promoted {count} learnings to Verified Queries (skipped {skipped})",
+        )
 
 
 @admin.register(GoldenQuery)

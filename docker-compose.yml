@@ -15,30 +15,60 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # Django API server
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     command: >
       sh -c "python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
     environment:
       - DATABASE_URL=postgresql://platform:${PLATFORM_DB_PASSWORD:-devpassword}@platform-db:5432/agent_platform
       - DJANGO_SETTINGS_MODULE=config.settings.development
       - DB_CREDENTIAL_KEY=${DB_CREDENTIAL_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-in-production}
+      - REDIS_URL=redis://redis:6379/0
+      - MAX_CONNECTIONS_PER_PROJECT=5
     volumes:
       - .:/app
+      - static_files:/app/staticfiles
     ports:
       - "8000:8000"
     depends_on:
       platform-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   # Chainlit frontend
   chainlit:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.chainlit
     command: chainlit run chainlit_app/app.py --host 0.0.0.0 --port 8501
     environment:
       - DATABASE_URL=postgresql://platform:${PLATFORM_DB_PASSWORD:-devpassword}@platform-db:5432/agent_platform
@@ -46,6 +76,8 @@ services:
       - DB_CREDENTIAL_KEY=${DB_CREDENTIAL_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:-dev-chainlit-secret}
+      - USE_POSTGRES_CHECKPOINTER=true
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
     ports:
@@ -53,6 +85,15 @@ services:
     depends_on:
       - api
       - platform-db
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
 volumes:
   platform_data:
+  redis_data:
+  static_files:

@@ -273,6 +273,11 @@ class AgentLearning(models.Model):
             ("verified_query", "Verified Query"),
         ],
     )
+    promoted_to_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="UUID of the promoted BusinessRule or VerifiedQuery.",
+    )
 
     # Source
     discovered_in_conversation = models.CharField(max_length=255, blank=True)
@@ -289,6 +294,130 @@ class AgentLearning(models.Model):
 
     def __str__(self):
         return f"Learning: {self.description[:80]}..."
+
+    def increase_confidence(self, amount: float = 0.1) -> float:
+        """
+        Increase the confidence score, capping at 1.0.
+
+        Args:
+            amount: The amount to increase (default 0.1)
+
+        Returns:
+            The new confidence score
+        """
+        self.confidence_score = min(1.0, self.confidence_score + amount)
+        self.save(update_fields=["confidence_score"])
+        return self.confidence_score
+
+    def decrease_confidence(self, amount: float = 0.1) -> float:
+        """
+        Decrease the confidence score, flooring at 0.0.
+
+        Args:
+            amount: The amount to decrease (default 0.1)
+
+        Returns:
+            The new confidence score
+        """
+        self.confidence_score = max(0.0, self.confidence_score - amount)
+        self.save(update_fields=["confidence_score"])
+        return self.confidence_score
+
+    def promote_to_business_rule(self, user=None) -> "BusinessRule":
+        """
+        Promote this learning to a BusinessRule.
+
+        Creates a new BusinessRule based on this learning's content,
+        marks this learning as promoted, and deactivates it.
+
+        Args:
+            user: The user performing the promotion (optional)
+
+        Returns:
+            The created BusinessRule instance
+        """
+        if self.promoted_to:
+            raise ValueError(
+                f"This learning has already been promoted to {self.promoted_to}"
+            )
+
+        business_rule = BusinessRule.objects.create(
+            project=self.project,
+            title=self.description[:255],
+            description=self._build_promotion_description(),
+            applies_to_tables=self.applies_to_tables,
+            tags=[self.category] if self.category != "other" else [],
+            created_by=user,
+        )
+
+        self.promoted_to = "business_rule"
+        self.promoted_to_id = business_rule.id
+        self.is_active = False
+        self.save(update_fields=["promoted_to", "promoted_to_id", "is_active"])
+
+        return business_rule
+
+    def promote_to_verified_query(self, user=None) -> "VerifiedQuery":
+        """
+        Promote this learning to a VerifiedQuery.
+
+        Requires that corrected_sql is present. Creates a new VerifiedQuery
+        based on this learning's corrected SQL, marks this learning as
+        promoted, and deactivates it.
+
+        Args:
+            user: The user performing the promotion (optional)
+
+        Returns:
+            The created VerifiedQuery instance
+
+        Raises:
+            ValueError: If no corrected_sql is available
+        """
+        if self.promoted_to:
+            raise ValueError(
+                f"This learning has already been promoted to {self.promoted_to}"
+            )
+
+        if not self.corrected_sql:
+            raise ValueError(
+                "Cannot promote to VerifiedQuery: no corrected_sql available"
+            )
+
+        from django.utils import timezone
+
+        verified_query = VerifiedQuery.objects.create(
+            project=self.project,
+            name=self.description[:255],
+            description=self._build_promotion_description(),
+            sql=self.corrected_sql,
+            tables_used=self.applies_to_tables,
+            tags=[self.category] if self.category != "other" else [],
+            verified_by=user,
+            verified_at=timezone.now(),
+        )
+
+        self.promoted_to = "verified_query"
+        self.promoted_to_id = verified_query.id
+        self.is_active = False
+        self.save(update_fields=["promoted_to", "promoted_to_id", "is_active"])
+
+        return verified_query
+
+    def _build_promotion_description(self) -> str:
+        """Build a detailed description for promoted items."""
+        parts = [self.description]
+
+        if self.original_error:
+            parts.append(f"\n\nOriginal Error:\n{self.original_error}")
+
+        if self.original_sql:
+            parts.append(f"\n\nOriginal SQL:\n{self.original_sql}")
+
+        if self.corrected_sql:
+            parts.append(f"\n\nCorrected SQL:\n{self.corrected_sql}")
+
+        return "".join(parts)
 
 
 class GoldenQuery(models.Model):

@@ -65,6 +65,16 @@ class Project(models.Model):
     )
     data_dictionary_generated_at = models.DateTimeField(null=True, blank=True)
 
+    # Database role for read-only access (created by setup_project_db.py)
+    readonly_role = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="PostgreSQL role name for read-only access to project database.",
+    )
+
+    # Status
+    is_active = models.BooleanField(default=True)
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

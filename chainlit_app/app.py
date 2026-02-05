@@ -47,8 +47,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# In-memory checkpointer for MVP - stores conversation state
-# In production, replace with PostgresSaver for persistence
+# Checkpointer selection based on environment
+# In development: use MemorySaver (fast, no setup required)
+# In production: use PostgresSaver for conversation persistence
+_USE_POSTGRES_CHECKPOINTER = os.environ.get("USE_POSTGRES_CHECKPOINTER", "").lower() in (
+    "1", "true", "yes"
+)
+
+# Global checkpointer instance for sync operations
+# For async operations with PostgresSaver, use get_postgres_checkpointer() context manager
 memory_checkpointer = MemorySaver()
 
 

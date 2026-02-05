@@ -332,56 +332,56 @@ From addendum 1 Section A2:
 
 ### 5.1 Eval System — `apps/knowledge/`
 From addendum 2 Section B3:
-- `GoldenQuery` model — question, expected_sql, expected_result, comparison_mode, tolerance
-- `EvalRun` model — results aggregation (total, passed, failed, accuracy), per-query details
-- Comparison modes: exact, approximate (with tolerance), row_count, contains, structure
+- [x] `GoldenQuery` model — question, expected_sql, expected_result, comparison_mode, tolerance
+- [x] `EvalRun` model — results aggregation (total, passed, failed, accuracy), per-query details
+- [x] Comparison modes: exact, approximate (with tolerance), row_count, contains, structure
 
 ### 5.2 Eval Runner — `apps/knowledge/services/eval_runner.py`
-- Takes a project + optional filters (tags, difficulty)
-- Runs each golden query through the agent
-- Compares results against expected values
-- Records per-query pass/fail with details
-- Calculates overall accuracy
+- [x] Takes a project + optional filters (tags, difficulty)
+- [x] Runs each golden query through the agent
+- [x] Compares results against expected values
+- [x] Records per-query pass/fail with details
+- [x] Calculates overall accuracy
 
 ### 5.3 Eval Management Command — `apps/knowledge/management/commands/run_eval.py`
-- `python manage.py run_eval --project-slug X`
-- `python manage.py run_eval --project-slug X --tag finance --difficulty easy`
-- Output: summary table + detailed failures
+- [x] `python manage.py run_eval --project-slug X`
+- [x] `python manage.py run_eval --project-slug X --tag finance --difficulty easy`
+- [x] Output: summary table + detailed failures
 
 ### 5.4 PostgreSQL Checkpointer
-- Switch from MemorySaver to `PostgresSaver` from `langgraph-checkpoint-postgres`
-- Persistent conversation memory across sessions
-- Configure connection to platform DB
+- [x] Switch from MemorySaver to `PostgresSaver` from `langgraph-checkpoint-postgres`
+- [x] Persistent conversation memory across sessions
+- [x] Configure connection to platform DB
 
 ### 5.5 Database Role Setup Script — `scripts/setup_project_db.py`
 From base spec Section 8:
-- Creates read-only PostgreSQL role per project
-- Grants: CONNECT, USAGE on schema, SELECT on all tables + future tables
-- Revokes: everything on public schema
-- Sets connection limit
-- Idempotent (safe to re-run)
+- [x] Creates read-only PostgreSQL role per project
+- [x] Grants: CONNECT, USAGE on schema, SELECT on all tables + future tables
+- [x] Revokes: everything on public schema
+- [x] Sets connection limit
+- [x] Idempotent (safe to re-run)
 
 ### 5.6 Connection Pooling
-- Add connection pooling for project database connections
-- Options: pgbouncer (external) or Django persistent connections
-- Connection pool per project, with max connection limits
+- [x] Add connection pooling for project database connections
+- [x] Options: pgbouncer (external) or Django persistent connections
+- [x] Connection pool per project, with max connection limits
 
 ### 5.7 Docker Compose — Final
 From base spec Section 10:
-- platform-db: PostgreSQL 16
-- api: Django server
-- chainlit: Chainlit frontend
-- Shared volumes, environment variables, proper networking
+- [x] platform-db: PostgreSQL 16
+- [x] api: Django server
+- [x] chainlit: Chainlit frontend
+- [x] Shared volumes, environment variables, proper networking
 
 ### 5.8 Knowledge Curation Workflow
-- Admin action: promote AgentLearning → BusinessRule or VerifiedQuery
-- Review interface for learnings (approve, reject, edit)
-- Learning confidence score management (increases when confirmed, decreases when contradicted)
+- [x] Admin action: promote AgentLearning → BusinessRule or VerifiedQuery
+- [x] Review interface for learnings (approve, reject, edit)
+- [x] Learning confidence score management (increases when confirmed, decreases when contradicted)
 
 ### 5.9 Tests
-- Eval runner with known golden queries
-- Connection pooling under load
-- Docker Compose full-stack smoke test
+- [ ] Eval runner with known golden queries
+- [ ] Connection pooling under load
+- [ ] Docker Compose full-stack smoke test
 
 ---
 
