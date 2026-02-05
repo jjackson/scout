@@ -398,9 +398,13 @@ async def on_message(message: cl.Message) -> None:
         await response_message.update()
 
     except Exception as e:
-        logger.exception("Error during agent invocation: %s", e)
+        # Generate an error reference for support without exposing internals
+        import hashlib
+        import time
+        error_ref = hashlib.sha256(f"{time.time()}{e}".encode()).hexdigest()[:8]
+        logger.exception("Error during agent invocation [ref=%s]: %s", error_ref, e)
         await cl.Message(
-            content=f"An error occurred while processing your request: {e!s}",
+            content=f"An error occurred while processing your request. Reference: {error_ref}",
             author="system",
         ).send()
 

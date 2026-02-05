@@ -7,7 +7,15 @@ import uuid
 
 from cryptography.fernet import Fernet
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models
+
+
+# Validator for database schema names to prevent SQL injection
+schema_validator = RegexValidator(
+    regex=r'^[a-zA-Z_][a-zA-Z0-9_]*$',
+    message='Invalid schema name format. Must start with a letter or underscore, and contain only letters, numbers, and underscores.'
+)
 
 
 class Project(models.Model):
@@ -27,7 +35,11 @@ class Project(models.Model):
     db_host = models.CharField(max_length=255)
     db_port = models.IntegerField(default=5432)
     db_name = models.CharField(max_length=255)
-    db_schema = models.CharField(max_length=255, default="public")
+    db_schema = models.CharField(
+        max_length=255,
+        default="public",
+        validators=[schema_validator],
+    )
     # Encrypted fields - store the encrypted connection credentials
     _db_user = models.BinaryField(db_column="db_user")
     _db_password = models.BinaryField(db_column="db_password")
@@ -196,6 +208,9 @@ class SavedQuery(models.Model):
     class Meta:
         ordering = ["-updated_at"]
         verbose_name_plural = "Saved queries"
+        indexes = [
+            models.Index(fields=["project", "-updated_at"]),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.project.name})"

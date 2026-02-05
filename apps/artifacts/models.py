@@ -268,6 +268,9 @@ class SharedArtifact(models.Model):
         ordering = ["-created_at"]
         verbose_name = "Shared Artifact"
         verbose_name_plural = "Shared Artifacts"
+        indexes = [
+            models.Index(fields=["artifact", "-created_at"]),
+        ]
 
     def __str__(self):
         return f"Share: {self.artifact.title} ({self.access_level})"

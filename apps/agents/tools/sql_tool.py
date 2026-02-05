@@ -27,8 +27,12 @@ import sqlglot
 from langchain_core.tools import tool
 from sqlglot import exp
 
+from apps.projects.services.db_manager import get_pool_manager
+from apps.projects.services.rate_limiter import RateLimitExceeded, get_rate_limiter
+
 if TYPE_CHECKING:
     from apps.projects.models import Project
+    from apps.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -464,7 +468,7 @@ class SQLExecutionResult:
         }
 
 
-def create_sql_tool(project: Project):
+def create_sql_tool(project: Project, user: User | None = None):
     """
     Factory function to create a SQL execution tool for a specific project.
 
@@ -474,6 +478,7 @@ def create_sql_tool(project: Project):
     Args:
         project: The Project model instance containing database connection
                  settings and access restrictions.
+        user: The user executing the queries (for rate limiting).
 
     Returns:
         A LangChain tool function that executes SQL queries.
@@ -481,7 +486,7 @@ def create_sql_tool(project: Project):
     Example:
         >>> from apps.projects.models import Project
         >>> project = Project.objects.get(slug="my-project")
-        >>> sql_tool = create_sql_tool(project)
+        >>> sql_tool = create_sql_tool(project, user)
         >>> result = sql_tool.invoke({"query": "SELECT * FROM users LIMIT 10"})
     """
     # Create validator with project settings
@@ -561,36 +566,39 @@ def create_sql_tool(project: Project):
                 )
                 result.truncated = True
 
-        # Execute the query
-        conn = None
-        cursor = None
+        # Check rate limit before executing
         try:
-            # Get connection parameters from project
-            conn_params = project.get_connection_params()
+            get_rate_limiter().check_rate_limit(user, project)
+        except RateLimitExceeded as e:
+            result.error = str(e)
+            return result.to_dict()
 
-            # Connect with psycopg2
-            conn = psycopg2.connect(**conn_params)
+        # Execute the query using connection pool
+        try:
+            with get_pool_manager().get_connection(project) as conn:
+                # Create cursor and execute
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(result.sql_executed)
 
-            # Set connection to read-only mode
-            conn.set_session(readonly=True)
+                    # Fetch results
+                    if cursor.description:
+                        result.columns = [desc[0] for desc in cursor.description]
+                        result.rows = [list(row) for row in cursor.fetchall()]
+                        result.row_count = len(result.rows)
 
-            # Create cursor and execute
-            cursor = conn.cursor()
-            cursor.execute(result.sql_executed)
+                        # Check if we hit the limit (may indicate truncation)
+                        if result.row_count == validator.max_limit:
+                            result.truncated = True
+                            if not any("limited to" in c for c in result.caveats):
+                                result.caveats.append(
+                                    f"Results may be truncated (returned exactly {validator.max_limit} rows)"
+                                )
+                finally:
+                    cursor.close()
 
-            # Fetch results
-            if cursor.description:
-                result.columns = [desc[0] for desc in cursor.description]
-                result.rows = [list(row) for row in cursor.fetchall()]
-                result.row_count = len(result.rows)
-
-                # Check if we hit the limit (may indicate truncation)
-                if result.row_count == validator.max_limit:
-                    result.truncated = True
-                    if not any("limited to" in c for c in result.caveats):
-                        result.caveats.append(
-                            f"Results may be truncated (returned exactly {validator.max_limit} rows)"
-                        )
+            # Record successful query for rate limiting
+            get_rate_limiter().record_query(user, project)
 
             logger.info(
                 "SQL query executed for project %s: %d rows returned",
@@ -635,12 +643,6 @@ def create_sql_tool(project: Project):
                 project.slug,
             )
             result.error = "An unexpected error occurred while executing the query."
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
         return result.to_dict()
 

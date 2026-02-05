@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import os
+import secrets
 import sys
 
 # Add the project root to the path
@@ -34,6 +35,11 @@ import psycopg2
 from django.db import transaction
 
 from apps.projects.models import Project
+
+
+def generate_secure_password() -> str:
+    """Generate a cryptographically secure random password."""
+    return secrets.token_urlsafe(32)
 
 
 def generate_role_name(project: Project) -> str:
@@ -67,6 +73,9 @@ def setup_project_role(project: Project, dry_run: bool = False) -> dict:
     schema = project.db_schema or "public"
     db_name = conn_params.get("dbname", conn_params.get("database"))
 
+    # Generate a secure random password for the role
+    role_password = generate_secure_password()
+
     # SQL statements to execute
     statements = [
         # Create role if not exists (with a secure random password)
@@ -76,7 +85,7 @@ def setup_project_role(project: Project, dry_run: bool = False) -> dict:
             IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role_name}') THEN
                 CREATE ROLE {role_name} WITH
                     LOGIN
-                    PASSWORD 'scout_readonly_temp_password'
+                    PASSWORD '{role_password}'
                     NOSUPERUSER
                     NOCREATEDB
                     NOCREATEROLE

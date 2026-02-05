@@ -124,7 +124,9 @@ class ListSharesView(ArtifactSharePermissionMixin, APIView):
         if not has_permission:
             return error_response
 
-        shares = SharedArtifact.objects.filter(artifact=artifact).order_by("-created_at")
+        shares = SharedArtifact.objects.prefetch_related("allowed_users").filter(
+            artifact=artifact
+        ).order_by("-created_at")
         serializer = SharedArtifactListSerializer(shares, many=True)
 
         return Response(serializer.data)

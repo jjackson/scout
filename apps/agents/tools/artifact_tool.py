@@ -35,7 +35,11 @@ VALID_ARTIFACT_TYPES = frozenset({
 })
 
 
-def create_artifact_tools(project: "Project", user: "User | None") -> list:
+def create_artifact_tools(
+    project: "Project",
+    user: "User | None",
+    conversation_id: str | None = None
+) -> list:
     """
     Factory function to create artifact creation tools for a specific project.
 
@@ -47,6 +51,7 @@ def create_artifact_tools(project: "Project", user: "User | None") -> list:
         project: The Project model instance for scoping artifacts.
         user: The User model instance who triggered the conversation.
               Used to track artifact ownership.
+        conversation_id: The conversation/thread ID for tracking artifact provenance.
 
     Returns:
         A list of LangChain tool functions [create_artifact, update_artifact].
@@ -54,7 +59,7 @@ def create_artifact_tools(project: "Project", user: "User | None") -> list:
     Example:
         >>> from apps.projects.models import Project
         >>> project = Project.objects.get(slug="analytics")
-        >>> tools = create_artifact_tools(project, user)
+        >>> tools = create_artifact_tools(project, user, conversation_id="thread-123")
         >>> create_tool, update_tool = tools
     """
 
@@ -186,6 +191,7 @@ def create_artifact_tools(project: "Project", user: "User | None") -> list:
                 code=code,
                 data=data,
                 version=1,
+                conversation_id=conversation_id or "",
             )
 
             # Store source queries in the data field if provided

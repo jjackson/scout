@@ -21,11 +21,49 @@ from typing import TYPE_CHECKING
 
 import chainlit as cl
 from django.conf import settings as django_settings
+from django.core.cache import cache
 
 if TYPE_CHECKING:
     from apps.users.models import User
 
 logger = logging.getLogger(__name__)
+
+# Auth rate limiting constants
+AUTH_MAX_ATTEMPTS = 5
+AUTH_LOCKOUT_SECONDS = 300  # 5 minutes
+
+
+def check_auth_rate_limit(username: str) -> bool:
+    """
+    Check if the user is rate limited for authentication attempts.
+
+    Args:
+        username: The username/email being authenticated.
+
+    Returns:
+        True if rate limited (should block), False if OK to proceed.
+    """
+    cache_key = f"auth_attempts:{username}"
+    attempts = cache.get(cache_key, 0)
+    return attempts >= AUTH_MAX_ATTEMPTS
+
+
+def record_auth_attempt(username: str, success: bool) -> None:
+    """
+    Record an authentication attempt for rate limiting.
+
+    Args:
+        username: The username/email being authenticated.
+        success: Whether the authentication was successful.
+    """
+    cache_key = f"auth_attempts:{username}"
+    if success:
+        # Clear attempts on successful login
+        cache.delete(cache_key)
+    else:
+        # Increment failed attempts counter
+        attempts = cache.get(cache_key, 0) + 1
+        cache.set(cache_key, attempts, AUTH_LOCKOUT_SECONDS)
 
 
 @cl.password_auth_callback
@@ -48,11 +86,16 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
 
     from apps.users.models import User
 
+    # Check rate limit before processing
+    if check_auth_rate_limit(username):
+        logger.warning("Rate limit exceeded for user: %s", username)
+        return None
+
     # Check for development backdoor (only in DEBUG mode)
     dev_username = os.environ.get("CHAINLIT_DEV_USERNAME")
     dev_password = os.environ.get("CHAINLIT_DEV_PASSWORD")
 
-    if dev_username and dev_password:
+    if django_settings.DEBUG and dev_username and dev_password:
         if username == dev_username and password == dev_password:
             # Try to find the dev user
             try:
@@ -67,9 +110,11 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
             # Check is_active to prevent disabled users from logging in
             if not user.is_active:
                 logger.warning("Dev user %s is inactive, denying access", dev_username)
+                record_auth_attempt(username, False)
                 return None
 
             logger.info("Dev user authenticated: %s", username)
+            record_auth_attempt(username, True)
             return cl.User(
                 identifier=str(user.id),
                 metadata={
@@ -84,13 +129,16 @@ async def password_auth_callback(username: str, password: str) -> cl.User | None
 
     if user is None:
         logger.warning("Authentication failed for user: %s", username)
+        record_auth_attempt(username, False)
         return None
 
     if not user.is_active:
         logger.warning("Inactive user attempted login: %s", username)
+        record_auth_attempt(username, False)
         return None
 
     logger.info("User authenticated: %s", username)
+    record_auth_attempt(username, True)
     return cl.User(
         identifier=str(user.id),
         metadata={
@@ -204,14 +252,19 @@ async def oauth_callback(
         else:
             logger.info("Found existing user with email %s, linking social account", email)
 
-        # Create the SocialAccount link
-        SocialAccount.objects.create(
-            user=user,
+        # Create the SocialAccount link, using get_or_create to handle race conditions
+        social_account, created = SocialAccount.objects.get_or_create(
             provider=provider_id,
             uid=str(provider_user_id),
-            extra_data=raw_user_data,
+            defaults={"user": user, "extra_data": raw_user_data}
         )
-        logger.info("Created social account link: %s -> %s", email, provider_id)
+        if created:
+            logger.info("Created social account link: %s -> %s", email, provider_id)
+        else:
+            # Update extra_data if the account already exists
+            social_account.extra_data = raw_user_data
+            social_account.save(update_fields=["extra_data"])
+            logger.info("Updated existing social account link: %s -> %s", email, provider_id)
 
         return cl.User(
             identifier=str(user.id),

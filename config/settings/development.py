@@ -3,8 +3,15 @@ Django development settings for Scout data agent platform.
 """
 import os
 
-# Set development SECRET_KEY before importing base (which requires it)
-os.environ.setdefault("DJANGO_SECRET_KEY", "django-insecure-dev-only-not-for-production")
+from django.core.exceptions import ImproperlyConfigured
+
+# Require explicit SECRET_KEY even in development to avoid accidental production use
+if not os.environ.get("DJANGO_SECRET_KEY"):
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY environment variable is required. "
+        "For development, set it to any random string, e.g.: "
+        "export DJANGO_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
+    )
 
 from .base import *  # noqa: F401, F403
 

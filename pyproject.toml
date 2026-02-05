@@ -36,6 +36,9 @@ dependencies = [
     # Artifact export
     "playwright>=1.40",
 
+    # Security / HTML sanitization
+    "bleach>=6.0",
+
     # Utilities
     "python-dotenv>=1.0",
 

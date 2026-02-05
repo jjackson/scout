@@ -7,16 +7,79 @@ to various formats for download or sharing.
 
 from __future__ import annotations
 
-import base64
+import html
 import json
 import logging
-from io import BytesIO
 from typing import TYPE_CHECKING
+
+import bleach
 
 if TYPE_CHECKING:
     from apps.artifacts.models import Artifact
 
 logger = logging.getLogger(__name__)
+
+# Allowed SVG tags and attributes for sanitization
+ALLOWED_SVG_TAGS = [
+    'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline',
+    'polygon', 'text', 'tspan', 'defs', 'use', 'symbol', 'clipPath', 'mask',
+    'pattern', 'linearGradient', 'radialGradient', 'stop', 'filter',
+    'feGaussianBlur', 'feOffset', 'feBlend', 'feMerge', 'feMergeNode',
+    'feColorMatrix', 'feComposite', 'title', 'desc', 'a', 'image',
+]
+
+ALLOWED_SVG_ATTRIBUTES = {
+    '*': ['id', 'class', 'style', 'transform', 'opacity', 'fill', 'stroke',
+          'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray',
+          'stroke-dashoffset', 'fill-opacity', 'stroke-opacity', 'font-family',
+          'font-size', 'font-weight', 'font-style', 'text-anchor', 'alignment-baseline',
+          'dominant-baseline', 'clip-path', 'mask', 'filter'],
+    'svg': ['viewBox', 'width', 'height', 'xmlns', 'version', 'preserveAspectRatio'],
+    'rect': ['x', 'y', 'width', 'height', 'rx', 'ry'],
+    'circle': ['cx', 'cy', 'r'],
+    'ellipse': ['cx', 'cy', 'rx', 'ry'],
+    'line': ['x1', 'y1', 'x2', 'y2'],
+    'polyline': ['points'],
+    'polygon': ['points'],
+    'path': ['d'],
+    'text': ['x', 'y', 'dx', 'dy', 'textLength', 'lengthAdjust'],
+    'tspan': ['x', 'y', 'dx', 'dy'],
+    'use': ['href', 'xlink:href', 'x', 'y', 'width', 'height'],
+    'image': ['href', 'xlink:href', 'x', 'y', 'width', 'height', 'preserveAspectRatio'],
+    'linearGradient': ['x1', 'y1', 'x2', 'y2', 'gradientUnits', 'gradientTransform', 'spreadMethod'],
+    'radialGradient': ['cx', 'cy', 'r', 'fx', 'fy', 'gradientUnits', 'gradientTransform', 'spreadMethod'],
+    'stop': ['offset', 'stop-color', 'stop-opacity'],
+    'clipPath': ['clipPathUnits'],
+    'mask': ['maskUnits', 'maskContentUnits', 'x', 'y', 'width', 'height'],
+    'pattern': ['patternUnits', 'patternContentUnits', 'patternTransform', 'x', 'y', 'width', 'height'],
+    'filter': ['x', 'y', 'width', 'height', 'filterUnits', 'primitiveUnits'],
+    'feGaussianBlur': ['in', 'stdDeviation', 'result'],
+    'feOffset': ['in', 'dx', 'dy', 'result'],
+    'feBlend': ['in', 'in2', 'mode', 'result'],
+    'feMerge': [],
+    'feMergeNode': ['in'],
+    'feColorMatrix': ['in', 'type', 'values', 'result'],
+    'feComposite': ['in', 'in2', 'operator', 'k1', 'k2', 'k3', 'k4', 'result'],
+    'a': ['href', 'target'],
+}
+
+
+def sanitize_svg(svg_code: str) -> str:
+    """
+    Sanitize SVG code to prevent XSS attacks.
+
+    Args:
+        svg_code: Raw SVG code from artifact
+
+    Returns:
+        Sanitized SVG code with only allowed tags and attributes
+    """
+    return bleach.clean(
+        svg_code,
+        tags=ALLOWED_SVG_TAGS,
+        attributes=ALLOWED_SVG_ATTRIBUTES,
+        strip=True
+    )
 
 # Standalone HTML template with embedded libraries (from CDN)
 STANDALONE_HTML_TEMPLATE = """<!DOCTYPE html>
@@ -182,28 +245,32 @@ class ArtifactExporter:
             HTML string with embedded libraries and data
         """
         artifact = self.artifact
+        # Escape title to prevent XSS
+        safe_title = html.escape(artifact.title or "Artifact")
 
         if artifact.artifact_type == "markdown":
             return MARKDOWN_HTML_TEMPLATE.format(
-                title=artifact.title or "Artifact",
+                title=safe_title,
                 markdown_json=json.dumps(artifact.code),
             )
 
         if artifact.artifact_type == "plotly":
             # For plotly, the code contains the plot specification
             return PLOTLY_HTML_TEMPLATE.format(
-                title=artifact.title or "Chart",
+                title=html.escape(artifact.title or "Chart"),
                 plotly_json=artifact.code,
             )
 
         if artifact.artifact_type == "svg":
-            # SVG can be embedded directly
+            # Sanitize SVG to prevent XSS
+            safe_svg = sanitize_svg(artifact.code)
+            safe_svg_title = html.escape(artifact.title or "SVG")
             return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{artifact.title or 'SVG'}</title>
+    <title>{safe_svg_title}</title>
     <style>
         body {{
             margin: 0;
@@ -220,14 +287,14 @@ class ArtifactExporter:
     </style>
 </head>
 <body>
-    {artifact.code}
+    {safe_svg}
 </body>
 </html>
 """
 
         # Default: React/JSX artifact
         return STANDALONE_HTML_TEMPLATE.format(
-            title=artifact.title or "Artifact",
+            title=safe_title,
             data_json=json.dumps(artifact.data or {}),
             code=artifact.code,
         )

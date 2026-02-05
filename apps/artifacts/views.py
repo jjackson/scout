@@ -4,13 +4,12 @@ Artifact views for Scout data agent platform.
 Provides views for rendering artifacts in a sandboxed iframe,
 fetching artifact data via API, and serving shared artifacts.
 """
+import secrets
 from typing import Any
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
-from django.utils.decorators import method_decorator
 from django.views import View
-from django.views.decorators.csrf import csrf_exempt
 
 from apps.projects.models import ProjectMembership
 
@@ -18,7 +17,27 @@ from .models import AccessLevel, Artifact, SharedArtifact
 from .services.export import ArtifactExporter
 
 
-# Content Security Policy for the sandbox iframe
+def generate_csp_with_nonce(nonce: str) -> str:
+    """
+    Generate Content Security Policy with nonce for inline scripts.
+
+    Args:
+        nonce: A cryptographically secure random nonce.
+
+    Returns:
+        CSP header string with nonce for script-src.
+    """
+    return (
+        "default-src 'none'; "
+        f"script-src 'nonce-{nonce}' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; "
+        "style-src 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src data: blob:; "
+        "font-src https://cdn.jsdelivr.net; "
+        "connect-src 'none';"
+    )
+
+
+# Legacy CSP without nonce (kept for reference, but nonce version is preferred)
 SANDBOX_CSP = (
     "default-src 'none'; "
     "script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; "
@@ -37,29 +56,29 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
     <title>Artifact Sandbox</title>
 
     <!-- Tailwind CSS -->
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 
     <!-- React 18 -->
-    <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 
     <!-- Babel for JSX transformation -->
-    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
     <!-- Recharts for React charts -->
-    <script src="https://cdn.jsdelivr.net/npm/recharts@2/umd/Recharts.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/recharts@2/umd/Recharts.min.js"></script>
 
     <!-- Plotly for advanced charts -->
-    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist@2/plotly.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/plotly.js-dist@2/plotly.min.js"></script>
 
     <!-- D3 for custom visualizations -->
-    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 
     <!-- Lodash for data manipulation -->
-    <script src="https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js"></script>
 
     <!-- Marked for Markdown rendering -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+    <script nonce="{{CSP_NONCE}}" src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 
     <style>
         * {
@@ -148,7 +167,7 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
         }
     </style>
 </head>
-<body>
+<body data-parent-origin="{{PARENT_ORIGIN}}">
     <div id="root">
         <div id="artifact-container">
             <div class="loading-state" id="loading">
@@ -158,7 +177,7 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </div>
 
-    <script>
+    <script nonce="{{CSP_NONCE}}">
         // Artifact rendering system
         const ArtifactRenderer = {
             container: null,
@@ -167,8 +186,10 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
             init() {
                 this.container = document.getElementById('artifact-container');
                 window.addEventListener('message', this.handleMessage.bind(this));
+                // Get the parent origin from data attribute (set by server) or default to same origin
+                this.parentOrigin = document.body.dataset.parentOrigin || window.location.origin;
                 // Signal that we're ready to receive artifacts
-                window.parent.postMessage({ type: 'sandbox-ready' }, '*');
+                window.parent.postMessage({ type: 'sandbox-ready' }, this.parentOrigin);
             },
 
             handleMessage(event) {
@@ -415,7 +436,7 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
                 window.parent.postMessage({
                     type: 'artifact-error',
                     error: { title, message, details }
-                }, '*');
+                }, this.parentOrigin);
             },
 
             escapeHtml(text) {
@@ -446,18 +467,37 @@ class ArtifactSandboxView(View):
 
     def get(self, request: HttpRequest, artifact_id: str) -> HttpResponse:
         """Return the sandbox HTML with strict CSP headers."""
-        # Verify artifact exists (but don't require auth for sandbox page itself)
-        # The actual artifact data is fetched separately via ArtifactDataView
-        get_object_or_404(Artifact, pk=artifact_id)
+        artifact = get_object_or_404(Artifact, pk=artifact_id)
 
-        response = HttpResponse(SANDBOX_HTML_TEMPLATE, content_type="text/html")
-        response["Content-Security-Policy"] = SANDBOX_CSP
+        # Require authentication
+        if not request.user.is_authenticated:
+            return HttpResponse("Authentication required", status=401)
+
+        # Check project membership (unless superuser)
+        if not request.user.is_superuser:
+            has_access = ProjectMembership.objects.filter(
+                user=request.user, project=artifact.project
+            ).exists()
+            if not has_access:
+                return HttpResponse("Access denied", status=403)
+
+        # Build the parent origin for secure postMessage
+        parent_origin = request.build_absolute_uri('/').rstrip('/')
+
+        # Generate CSP nonce for inline scripts
+        csp_nonce = secrets.token_urlsafe(16)
+
+        # Inject the parent origin and nonce into the template
+        html_content = SANDBOX_HTML_TEMPLATE.replace('{{PARENT_ORIGIN}}', parent_origin)
+        html_content = html_content.replace('{{CSP_NONCE}}', csp_nonce)
+
+        response = HttpResponse(html_content, content_type="text/html")
+        response["Content-Security-Policy"] = generate_csp_with_nonce(csp_nonce)
         response["X-Content-Type-Options"] = "nosniff"
         response["X-Frame-Options"] = "SAMEORIGIN"
         return response
 
 
-@method_decorator(csrf_exempt, name="dispatch")
 class ArtifactDataView(View):
     """
     API endpoint to fetch artifact code and data.
