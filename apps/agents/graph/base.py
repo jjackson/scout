@@ -158,7 +158,10 @@ def build_agent_graph(
         This node prepends the system prompt to the messages and invokes
         the LLM. The LLM may respond with text, tool calls, or both.
         """
-        messages = [SystemMessage(content=system_prompt)] + list(state["messages"])
+        state_messages = list(state["messages"])
+        # Filter out any prior system messages to avoid duplicates across cycles
+        state_messages = [m for m in state_messages if not isinstance(m, SystemMessage)]
+        messages = [SystemMessage(content=system_prompt)] + state_messages
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 

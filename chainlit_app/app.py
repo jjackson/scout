@@ -252,7 +252,7 @@ async def setup_project(project_id: str) -> bool:
     logger.info("Building agent for project: %s", project.slug)
 
     try:
-        agent = build_agent_graph(
+        agent = await sync_to_async(build_agent_graph)(
             project=project,
             user=django_user,
             checkpointer=memory_checkpointer,
