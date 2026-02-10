@@ -64,5 +64,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Chainlit
-.chainlit/
+# Frontend
+frontend/node_modules/
+frontend/dist/

@@ -3,8 +3,10 @@ URL configuration for projects app.
 """
 from django.urls import path
 
+from apps.projects.views import ProjectListView
+
 app_name = "projects"
 
 urlpatterns = [
-    # API endpoints will be added in Phase 3
+    path("", ProjectListView.as_view(), name="project-list"),
 ]
