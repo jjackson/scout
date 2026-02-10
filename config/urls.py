@@ -17,7 +17,10 @@ urlpatterns = [
     path("api/projects/", include("apps.projects.urls")),
     path("api/projects/<uuid:project_id>/knowledge/", include("apps.knowledge.urls")),
     path("api/artifacts/", include("apps.artifacts.urls")),
-    path("api/recipes/", include("apps.recipes.urls")),
+    path(
+        "api/projects/<uuid:project_id>/recipes/",
+        include("apps.recipes.urls"),
+    ),
 ]
 
 if settings.DEBUG:
