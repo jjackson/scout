@@ -1,10 +1,32 @@
 """
 Admin configuration for Project models.
 """
+from django import forms
 from django.contrib import admin
 from django.utils.html import format_html
 
 from .models import Project, ProjectMembership
+
+
+class ProjectForm(forms.ModelForm):
+    """Custom form that adds plaintext input fields for encrypted credentials."""
+
+    db_user_input = forms.CharField(
+        label="Database user",
+        required=False,
+        widget=forms.TextInput(attrs={"autocomplete": "off"}),
+        help_text="Leave blank to keep existing value.",
+    )
+    db_password_input = forms.CharField(
+        label="Database password",
+        required=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}, render_value=False),
+        help_text="Leave blank to keep existing value.",
+    )
+
+    class Meta:
+        model = Project
+        exclude = ("_db_user", "_db_password")
 
 
 class ProjectMembershipInline(admin.TabularInline):
@@ -18,6 +40,8 @@ class ProjectMembershipInline(admin.TabularInline):
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
     """Admin interface for Project model."""
+
+    form = ProjectForm
 
     list_display = [
         "name",
@@ -37,7 +61,7 @@ class ProjectAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
         "data_dictionary_generated_at",
-        "data_dictionary_status",
+        "data_dictionary_display",
     ]
     autocomplete_fields = ["created_by"]
     inlines = [ProjectMembershipInline]
@@ -81,7 +105,7 @@ class ProjectAdmin(admin.ModelAdmin):
             "Data Dictionary",
             {
                 "fields": (
-                    "data_dictionary_status",
+                    "data_dictionary_display",
                     "data_dictionary_generated_at",
                 ),
                 "description": "Run 'python manage.py generate_data_dictionary --project-slug <slug>' to regenerate.",
@@ -97,14 +121,11 @@ class ProjectAdmin(admin.ModelAdmin):
     )
 
     def get_form(self, request, obj=None, **kwargs):
-        """Add custom form fields for password input."""
         form = super().get_form(request, obj, **kwargs)
+        # Pre-populate username (not password) when editing
+        if obj and hasattr(form, "base_fields") and "db_user_input" in form.base_fields:
+            form.base_fields["db_user_input"].initial = obj.db_user
         return form
-
-    def get_fieldsets(self, request, obj=None):
-        """Customize fieldsets based on whether we're adding or editing."""
-        fieldsets = super().get_fieldsets(request, obj)
-        return fieldsets
 
     @admin.display(description="Members")
     def member_count(self, obj):
@@ -115,14 +136,18 @@ class ProjectAdmin(admin.ModelAdmin):
         return obj.data_dictionary is not None
 
     @admin.display(description="Data Dictionary Status")
-    def data_dictionary_status(self, obj):
+    def data_dictionary_display(self, obj):
         if obj.data_dictionary:
             table_count = len(obj.data_dictionary.get("tables", {}))
             return format_html(
-                '<span style="color: green;">✓ Generated</span> ({} tables)',
+                '<span style="color: green;">{}</span> ({} tables)',
+                "✓ Generated",
                 table_count,
             )
-        return format_html('<span style="color: orange;">Not generated</span>')
+        return format_html(
+            '<span style="color: orange;">{}</span>',
+            "Not generated",
+        )
 
     # Custom handling for encrypted fields - using form field prefixes
     def save_model(self, request, obj, form, change):
