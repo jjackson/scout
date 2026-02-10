@@ -1,0 +1,87 @@
+# Installation
+
+## Prerequisites
+
+- Python 3.12+ (3.11+ supported)
+- PostgreSQL 14+
+- Node.js 18+ or [Bun](https://bun.sh/)
+- [uv](https://docs.astral.sh/uv/) -- fast Python package manager
+
+## Backend setup
+
+Clone the repository and install Python dependencies:
+
+```bash
+git clone <repo-url> scout
+cd scout
+uv sync
+```
+
+Create an environment file from the example and edit it with your settings:
+
+```bash
+cp .env.example .env
+```
+
+At minimum, set these variables in `.env`:
+
+```
+DATABASE_URL=postgresql://user:password@localhost/scout
+DJANGO_SECRET_KEY=your-secret-key
+ANTHROPIC_API_KEY=sk-ant-...
+DB_CREDENTIAL_KEY=your-fernet-key
+```
+
+Generate a Fernet encryption key for database credential storage:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Run migrations and create a superuser:
+
+```bash
+uv run manage.py migrate
+uv run manage.py collectstatic --noinput
+uv run manage.py createsuperuser
+```
+
+Start the ASGI development server:
+
+```bash
+DJANGO_SETTINGS_MODULE=config.settings.development \
+  uv run uvicorn config.asgi:application \
+  --host 127.0.0.1 --port 8000 --reload
+```
+
+## Frontend setup
+
+In a separate terminal:
+
+```bash
+cd frontend
+bun install
+bun dev
+```
+
+The frontend dev server starts on `http://localhost:5173` and proxies `/api/*` requests to the backend on port 8000.
+
+## Docker setup
+
+If you prefer Docker:
+
+```bash
+docker compose up --build
+```
+
+This starts the backend (port 8000), frontend (port 3000), and PostgreSQL.
+
+## Verify the installation
+
+1. Open `http://localhost:5173` (or `http://localhost:3000` with Docker).
+2. Log in with the superuser account you created.
+3. If you see the project selector, the installation is working.
+
+## Next step
+
+[Create your first project](first-project.md) to connect a database and start querying.
