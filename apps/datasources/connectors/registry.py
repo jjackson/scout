@@ -60,9 +60,7 @@ def get_available_source_types() -> list[str]:
 def _register_all_connectors():
     """Import all connector modules to register them."""
     from . import commcare  # noqa: F401
-
-    # Future connectors:
-    # from . import commcare_connect  # noqa: F401
+    from . import commcare_connect  # noqa: F401
 
 
 _register_all_connectors()
