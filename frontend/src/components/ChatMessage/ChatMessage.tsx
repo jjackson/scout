@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai"
 import { isToolUIPart, getToolName } from "ai"
+import Markdown from "react-markdown"
 import { ArtifactViewer } from "@/components/ArtifactViewer/ArtifactViewer"
 import { Bot, User, Wrench } from "lucide-react"
 
@@ -52,13 +53,17 @@ export function ChatMessage({ message }: ChatMessageProps) {
             return (
               <div
                 key={i}
-                className={`rounded-lg px-4 py-2 text-sm whitespace-pre-wrap ${
+                className={`rounded-lg px-4 py-2 text-sm ${
                   isUser
                     ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
+                    : "bg-muted prose prose-sm max-w-none"
                 }`}
               >
-                {part.text}
+                {isUser ? (
+                  part.text
+                ) : (
+                  <Markdown>{part.text}</Markdown>
+                )}
               </div>
             )
           }

@@ -1,5 +1,5 @@
 import { useChat } from "@ai-sdk/react"
-import { TextStreamChatTransport, type UIMessage } from "ai"
+import { DefaultChatTransport, type UIMessage } from "ai"
 import { useEffect, useRef, useState } from "react"
 import { getCsrfToken } from "@/api/client"
 import { useAppStore } from "@/store/store"
@@ -14,13 +14,23 @@ export function ChatPanel() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [input, setInput] = useState("")
 
+  // Use a ref so the transport body closure always reads fresh values,
+  // even though useChat caches the transport from the first render.
+  const contextRef = useRef({ projectId: activeProjectId, threadId })
+  contextRef.current = { projectId: activeProjectId, threadId }
+
+  const [transport] = useState(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat/",
+        credentials: "include",
+        headers: () => ({ "X-CSRFToken": getCsrfToken() }),
+        body: () => ({ data: contextRef.current }),
+      }),
+  )
+
   const { messages, sendMessage, status, stop, error } = useChat({
-    transport: new TextStreamChatTransport({
-      api: "/api/chat/",
-      credentials: "include",
-      headers: () => ({ "X-CSRFToken": getCsrfToken() }),
-      body: () => ({ data: { projectId: activeProjectId, threadId } }),
-    }),
+    transport,
   })
 
   const isStreaming = status === "streaming" || status === "submitted"

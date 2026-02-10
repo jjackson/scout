@@ -24,7 +24,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.agents.graph.base import build_agent_graph
 from apps.agents.memory.checkpointer import get_database_url
-from apps.chat.stream import langgraph_to_data_stream
+from apps.chat.stream import langgraph_to_ui_stream
 from apps.projects.models import Project, ProjectMembership
 
 logger = logging.getLogger(__name__)
@@ -33,21 +33,39 @@ logger = logging.getLogger(__name__)
 # Checkpointer singleton (lazy initialization)
 # ---------------------------------------------------------------------------
 _checkpointer = None
+_pool = None
 
 
-async def _ensure_checkpointer():
-    global _checkpointer
-    if _checkpointer is not None:
+async def _ensure_checkpointer(*, force_new: bool = False):
+    global _checkpointer, _pool
+    if _checkpointer is not None and not force_new:
         return _checkpointer
 
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg_pool import AsyncConnectionPool
 
         database_url = get_database_url()
-        saver_cm = AsyncPostgresSaver.from_conn_string(database_url)
-        checkpointer = await saver_cm.__aenter__()
-        await checkpointer.setup()
-        _checkpointer = checkpointer
+
+        # Close old pool if forcing a new one
+        if _pool is not None:
+            await _pool.close()
+
+        # Use a connection pool instead of a single connection so the
+        # checkpointer survives across requests.
+        _pool = AsyncConnectionPool(
+            conninfo=database_url,
+            max_size=20,
+            open=False,
+            kwargs={
+                "autocommit": True,
+                "prepare_threshold": 0,
+            },
+        )
+        await _pool.open(wait=True, timeout=10)
+
+        _checkpointer = AsyncPostgresSaver(_pool)
+        await _checkpointer.setup()
         logger.info("PostgreSQL checkpointer initialized")
     except Exception as e:
         from langgraph.checkpoint.memory import MemorySaver
@@ -142,6 +160,29 @@ def logout_view(request):
 
 
 # ---------------------------------------------------------------------------
+# Helpers to safely access request.user from an async context
+# ---------------------------------------------------------------------------
+
+@sync_to_async
+def _get_user_if_authenticated(request):
+    """Access request.user (triggers sync session load) from async context."""
+    if request.user.is_authenticated:
+        return request.user
+    return None
+
+
+@sync_to_async
+def _get_membership(user, project_id):
+    """Load project membership in a sync context."""
+    try:
+        return ProjectMembership.objects.select_related("project").get(
+            user=user, project_id=project_id
+        )
+    except ProjectMembership.DoesNotExist:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Streaming chat endpoint
 # ---------------------------------------------------------------------------
 
@@ -158,7 +199,9 @@ async def chat_view(request):
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    if not request.user.is_authenticated:
+    # Access request.user via sync_to_async to avoid SynchronousOnlyOperation
+    user = await _get_user_if_authenticated(request)
+    if user is None:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
     # Parse body
@@ -177,28 +220,30 @@ async def chat_view(request):
     if not project_id:
         return JsonResponse({"error": "projectId is required"}, status=400)
 
-    # Get the last user message
+    # Get the last user message.
+    # AI SDK v6 sends {parts: [{type:"text", text:"..."}]} instead of {content: "..."}.
     last_msg = messages[-1]
     user_content = last_msg.get("content", "")
+    if not user_content:
+        parts = last_msg.get("parts", [])
+        user_content = " ".join(
+            p.get("text", "") for p in parts if p.get("type") == "text"
+        )
     if not user_content or not user_content.strip():
         return JsonResponse({"error": "Empty message"}, status=400)
     if len(user_content) > MAX_MESSAGE_LENGTH:
         return JsonResponse({"error": f"Message exceeds {MAX_MESSAGE_LENGTH} characters"}, status=400)
 
     # Validate project membership
-    user = request.user
-    try:
-        membership = await ProjectMembership.objects.select_related("project").aget(
-            user=user, project_id=project_id
-        )
-    except ProjectMembership.DoesNotExist:
+    membership = await _get_membership(user, project_id)
+    if membership is None:
         return JsonResponse({"error": "Project not found or access denied"}, status=403)
 
     project = membership.project
     if not project.is_active:
         return JsonResponse({"error": "Project is inactive"}, status=403)
 
-    # Build agent
+    # Build agent (retry once with fresh checkpointer on connection errors)
     try:
         checkpointer = await _ensure_checkpointer()
         agent = await sync_to_async(build_agent_graph)(
@@ -206,10 +251,20 @@ async def chat_view(request):
             user=user,
             checkpointer=checkpointer,
         )
-    except Exception as e:
-        error_ref = hashlib.sha256(f"{time.time()}{e}".encode()).hexdigest()[:8]
-        logger.exception("Failed to build agent [ref=%s]", error_ref)
-        return JsonResponse({"error": f"Agent initialization failed. Ref: {error_ref}"}, status=500)
+    except Exception:
+        # Connection may have gone stale -- force a new checkpointer and retry
+        try:
+            logger.info("Retrying agent build with fresh checkpointer")
+            checkpointer = await _ensure_checkpointer(force_new=True)
+            agent = await sync_to_async(build_agent_graph)(
+                project=project,
+                user=user,
+                checkpointer=checkpointer,
+            )
+        except Exception as e:
+            error_ref = hashlib.sha256(f"{time.time()}{e}".encode()).hexdigest()[:8]
+            logger.exception("Failed to build agent [ref=%s]", error_ref)
+            return JsonResponse({"error": f"Agent initialization failed. Ref: {error_ref}"}, status=500)
 
     # Build LangGraph input state
     from langchain_core.messages import HumanMessage
@@ -226,10 +281,10 @@ async def chat_view(request):
     }
     config = {"configurable": {"thread_id": thread_id}}
 
-    # Return streaming response
+    # Return streaming response (SSE for AI SDK v6 DefaultChatTransport)
     response = StreamingHttpResponse(
-        langgraph_to_data_stream(agent, input_state, config),
-        content_type="text/plain; charset=utf-8",
+        langgraph_to_ui_stream(agent, input_state, config),
+        content_type="text/event-stream; charset=utf-8",
     )
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
