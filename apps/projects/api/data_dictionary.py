@@ -7,7 +7,6 @@ and managing table annotations via TableKnowledge records.
 import asyncio
 import logging
 
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -15,72 +14,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.knowledge.models import TableKnowledge
-from apps.projects.models import Project, ProjectMembership, ProjectRole
+from apps.projects.models import Project
+
+from .permissions import ProjectPermissionMixin
 
 logger = logging.getLogger(__name__)
-
-
-class ProjectPermissionMixin:
-    """
-    Mixin providing permission checking for project operations.
-
-    Provides methods to check if a user has access to a project
-    and if they have admin permissions.
-    """
-
-    def get_project(self, project_id):
-        """Retrieve a project by ID."""
-        return get_object_or_404(
-            Project.objects.prefetch_related("memberships"),
-            pk=project_id,
-        )
-
-    def get_user_membership(self, user, project):
-        """Get the user's membership in a project, if any."""
-        if user.is_superuser:
-            return None  # Superusers have implicit access
-        return ProjectMembership.objects.filter(
-            user=user,
-            project=project,
-        ).first()
-
-    def check_project_access(self, request, project):
-        """
-        Check if the user has any access to the project.
-
-        Returns:
-            tuple: (has_access: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership:
-            return True, None
-
-        return False, Response(
-            {"error": "You do not have access to this project."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    def check_admin_permission(self, request, project):
-        """
-        Check if the user has admin permission for the project.
-
-        Returns:
-            tuple: (is_admin: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership and membership.role == ProjectRole.ADMIN:
-            return True, None
-
-        return False, Response(
-            {"error": "You must be a project admin to perform this action."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
 
 class DataDictionaryView(ProjectPermissionMixin, APIView):
@@ -368,12 +306,30 @@ class TableAnnotationsView(ProjectPermissionMixin, APIView):
 
         Returns:
             tuple of (schema_name, table_name)
+
+        Raises:
+            ValueError: If schema or table name contains invalid characters
         """
+        import re
+
+        # Valid SQL identifier pattern: starts with letter/underscore, contains only
+        # alphanumeric and underscores
+        identifier_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
         parts = table_path.split(".", 1)
         if len(parts) == 2:
-            return parts[0], parts[1]
-        # Default to public schema if not specified
-        return "public", parts[0]
+            schema_name, table_name = parts[0], parts[1]
+        else:
+            # Default to public schema if not specified
+            schema_name, table_name = "public", parts[0]
+
+        # Validate both schema and table names
+        if not identifier_pattern.match(schema_name):
+            raise ValueError(f"Invalid schema name format: {schema_name}")
+        if not identifier_pattern.match(table_name):
+            raise ValueError(f"Invalid table name format: {table_name}")
+
+        return schema_name, table_name
 
     def get(self, request, project_id, table_path):
         """Get table details with annotations."""
@@ -383,7 +339,13 @@ class TableAnnotationsView(ProjectPermissionMixin, APIView):
         if not has_access:
             return error_response
 
-        schema_name, table_name = self._parse_table_path(table_path)
+        try:
+            schema_name, table_name = self._parse_table_path(table_path)
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         qualified_name = f"{schema_name}.{table_name}"
 
         # Get table info from data dictionary
@@ -436,7 +398,13 @@ class TableAnnotationsView(ProjectPermissionMixin, APIView):
         if not is_admin:
             return error_response
 
-        schema_name, table_name = self._parse_table_path(table_path)
+        try:
+            schema_name, table_name = self._parse_table_path(table_path)
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         qualified_name = f"{schema_name}.{table_name}"
 
         # Verify table exists in data dictionary

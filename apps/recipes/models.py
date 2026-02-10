@@ -87,6 +87,8 @@ class Recipe(models.Model):
         Returns:
             List of validation error messages (empty if valid).
         """
+        from datetime import datetime
+
         errors = []
         required_vars = set(self.get_variable_names())
         provided_vars = set(values.keys())
@@ -103,15 +105,46 @@ class Recipe(models.Model):
         if unknown:
             errors.append(f"Unknown variables: {', '.join(unknown)}")
 
-        # Type validation for select fields
+        # Type validation for all variable types
         for var_def in self.variables:
             var_name = var_def.get("name")
-            if var_name in values and var_def.get("type") == "select":
+            var_type = var_def.get("type", "string")
+
+            if var_name not in values:
+                continue
+
+            value = values[var_name]
+
+            # Skip validation for empty/None values if variable has a default
+            if value is None or value == "":
+                continue
+
+            if var_type == "select":
                 options = var_def.get("options", [])
-                if options and values[var_name] not in options:
+                if options and value not in options:
                     errors.append(
                         f"Invalid value for {var_name}: must be one of {options}"
                     )
+            elif var_type == "number":
+                try:
+                    float(value)
+                except (ValueError, TypeError):
+                    errors.append(f"Invalid number for {var_name}: {value}")
+            elif var_type == "boolean":
+                if isinstance(value, str):
+                    if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+                        errors.append(f"Invalid boolean for {var_name}: {value}")
+                elif not isinstance(value, bool):
+                    errors.append(f"Invalid boolean for {var_name}: {value}")
+            elif var_type == "date":
+                if isinstance(value, str):
+                    # Try ISO format (YYYY-MM-DD)
+                    try:
+                        datetime.strptime(value, "%Y-%m-%d")
+                    except ValueError:
+                        errors.append(
+                            f"Invalid date for {var_name}: {value} (expected YYYY-MM-DD format)"
+                        )
 
         return errors
 

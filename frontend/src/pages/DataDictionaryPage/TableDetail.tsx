@@ -107,15 +107,28 @@ export function TableDetail({ projectId, table }: TableDetailProps) {
 
   // Track if any debounced value has changed from the initial value
   const hasChangedRef = useRef(false)
+  // Track the table key when we first started editing to prevent cross-table saves
+  const savedForTableRef = useRef<string | null>(null)
 
   useEffect(() => {
+    // Reset change tracking when table changes
+    if (savedForTableRef.current !== tableKey) {
+      hasChangedRef.current = false
+      savedForTableRef.current = tableKey
+      return
+    }
+
     // Skip first render after initialization
     if (!hasChangedRef.current) {
       hasChangedRef.current = true
       return
     }
-    saveAnnotations()
-  }, [saveAnnotations])
+
+    // Only save if we're still on the same table we started editing
+    if (initializedRef.current === tableKey) {
+      saveAnnotations()
+    }
+  }, [saveAnnotations, tableKey])
 
   const updateColumnNote = (columnName: string, note: string) => {
     setColumnNotes((prev) => ({

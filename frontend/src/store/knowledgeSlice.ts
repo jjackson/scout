@@ -3,22 +3,110 @@ import { api } from "@/api/client"
 
 export type KnowledgeType = "metric" | "rule" | "query" | "learning"
 
-export interface KnowledgeItem {
+/**
+ * Base fields shared across all knowledge item types
+ */
+interface KnowledgeItemBase {
   id: string
   type: KnowledgeType
-  name?: string
-  description?: string
-  sql_template?: string
-  rule_text?: string
-  context?: string
-  sql?: string
   tags?: string[]
-  correction?: string
-  confidence?: number
-  promoted_to?: string
-  related_tables: string[]
   created_at: string
-  updated_at: string
+  updated_at?: string
+}
+
+/**
+ * CanonicalMetric - type: "metric"
+ */
+export interface MetricItem extends KnowledgeItemBase {
+  type: "metric"
+  name: string
+  definition?: string
+  sql_template?: string
+  unit?: string
+  owner?: string
+  caveats?: string
+}
+
+/**
+ * BusinessRule - type: "rule"
+ */
+export interface RuleItem extends KnowledgeItemBase {
+  type: "rule"
+  title: string
+  description?: string
+  applies_to_tables?: string[]
+  applies_to_metrics?: string[]
+}
+
+/**
+ * VerifiedQuery - type: "query"
+ */
+export interface QueryItem extends KnowledgeItemBase {
+  type: "query"
+  name: string
+  description?: string
+  sql: string
+  tables_used?: string[]
+  verified_by?: string
+  verified_at?: string
+}
+
+/**
+ * AgentLearning - type: "learning"
+ */
+export interface LearningItem extends KnowledgeItemBase {
+  type: "learning"
+  description: string
+  category?: string
+  applies_to_tables?: string[]
+  original_error?: string
+  original_sql?: string
+  corrected_sql?: string
+  confidence_score?: number
+  times_applied?: number
+  is_active?: boolean
+  promoted_to?: string
+  promoted_to_id?: string
+}
+
+/**
+ * Union type for all knowledge items
+ */
+export type KnowledgeItem = MetricItem | RuleItem | QueryItem | LearningItem
+
+/**
+ * Helper to get display name for any knowledge item
+ */
+export function getKnowledgeItemName(item: KnowledgeItem): string {
+  switch (item.type) {
+    case "metric":
+    case "query":
+      return item.name
+    case "rule":
+      return item.title
+    case "learning":
+      return item.description.slice(0, 50) + (item.description.length > 50 ? "..." : "")
+  }
+}
+
+/**
+ * Pagination metadata from the API
+ */
+export interface PaginationInfo {
+  page: number
+  page_size: number
+  total_count: number
+  total_pages: number
+  has_next: boolean
+  has_previous: boolean
+}
+
+/**
+ * Paginated response from the knowledge API
+ */
+interface PaginatedKnowledgeResponse {
+  results: KnowledgeItem[]
+  pagination: PaginationInfo
 }
 
 export type KnowledgeStatus = "idle" | "loading" | "loaded" | "error"
@@ -26,14 +114,16 @@ export type KnowledgeStatus = "idle" | "loading" | "loaded" | "error"
 export interface KnowledgeSlice {
   knowledgeItems: KnowledgeItem[]
   knowledgeStatus: KnowledgeStatus
+  knowledgeError: string | null
+  knowledgePagination: PaginationInfo | null
   knowledgeFilter: KnowledgeType | null
   knowledgeSearch: string
   knowledgeActions: {
-    fetchKnowledge: (projectId: string, type?: KnowledgeType, search?: string) => Promise<void>
+    fetchKnowledge: (projectId: string, options?: { type?: KnowledgeType; search?: string; page?: number; pageSize?: number }) => Promise<void>
     createKnowledge: (projectId: string, data: Partial<KnowledgeItem> & { type: KnowledgeType }) => Promise<KnowledgeItem>
     updateKnowledge: (projectId: string, id: string, data: Partial<KnowledgeItem>) => Promise<KnowledgeItem>
     deleteKnowledge: (projectId: string, id: string) => Promise<void>
-    promoteKnowledge: (projectId: string, id: string, data: { target_type: "rule" | "query"; name: string; [key: string]: unknown }) => Promise<KnowledgeItem>
+    promoteKnowledge: (projectId: string, id: string, data: { promote_to: "business_rule" | "verified_query" }) => Promise<KnowledgeItem>
     setFilter: (type: KnowledgeType | null) => void
     setSearch: (search: string) => void
   }
@@ -42,28 +132,41 @@ export interface KnowledgeSlice {
 export const createKnowledgeSlice: StateCreator<KnowledgeSlice, [], [], KnowledgeSlice> = (set, get) => ({
   knowledgeItems: [],
   knowledgeStatus: "idle",
+  knowledgeError: null,
+  knowledgePagination: null,
   knowledgeFilter: null,
   knowledgeSearch: "",
   knowledgeActions: {
-    fetchKnowledge: async (projectId: string, type?: KnowledgeType, search?: string) => {
-      set({ knowledgeStatus: "loading" })
+    fetchKnowledge: async (projectId: string, options?: { type?: KnowledgeType; search?: string; page?: number; pageSize?: number }) => {
+      set({ knowledgeStatus: "loading", knowledgeError: null })
       try {
         const params = new URLSearchParams()
-        if (type) params.set("type", type)
-        if (search) params.set("search", search)
+        if (options?.type) params.set("type", options.type)
+        if (options?.search) params.set("search", options.search)
+        if (options?.page) params.set("page", String(options.page))
+        if (options?.pageSize) params.set("page_size", String(options.pageSize))
         const queryString = params.toString()
         const url = `/api/projects/${projectId}/knowledge/${queryString ? `?${queryString}` : ""}`
-        const items = await api.get<KnowledgeItem[]>(url)
-        set({ knowledgeItems: items, knowledgeStatus: "loaded" })
-      } catch {
-        set({ knowledgeStatus: "error" })
+        const response = await api.get<PaginatedKnowledgeResponse>(url)
+        set({
+          knowledgeItems: response.results,
+          knowledgePagination: response.pagination,
+          knowledgeStatus: "loaded",
+          knowledgeError: null,
+        })
+      } catch (error) {
+        set({
+          knowledgeStatus: "error",
+          knowledgePagination: null,
+          knowledgeError: error instanceof Error ? error.message : "Failed to load knowledge items",
+        })
       }
     },
 
     createKnowledge: async (projectId: string, data: Partial<KnowledgeItem> & { type: KnowledgeType }) => {
       const item = await api.post<KnowledgeItem>(`/api/projects/${projectId}/knowledge/`, data)
       const items = get().knowledgeItems
-      set({ knowledgeItems: [...items, item] })
+      set({ knowledgeItems: [item, ...items] })
       return item
     },
 
@@ -80,7 +183,7 @@ export const createKnowledgeSlice: StateCreator<KnowledgeSlice, [], [], Knowledg
       set({ knowledgeItems: items })
     },
 
-    promoteKnowledge: async (projectId: string, id: string, data: { target_type: "rule" | "query"; name: string; [key: string]: unknown }) => {
+    promoteKnowledge: async (projectId: string, id: string, data: { promote_to: "business_rule" | "verified_query" }) => {
       const item = await api.post<KnowledgeItem>(`/api/projects/${projectId}/knowledge/${id}/promote/`, data)
       const items = get().knowledgeItems.map((i) => (i.id === id ? item : i))
       set({ knowledgeItems: items })

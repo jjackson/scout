@@ -40,6 +40,7 @@ export type DictionaryStatus = "idle" | "loading" | "loaded" | "error"
 export interface DictionarySlice {
   dataDictionary: DataDictionary | null
   dictionaryStatus: DictionaryStatus
+  dictionaryError: string | null
   selectedTable: TableDetail | null
   dictionaryActions: {
     fetchDictionary: (projectId: string) => Promise<void>
@@ -63,29 +64,36 @@ export const createDictionarySlice: StateCreator<
 > = (set, get) => ({
   dataDictionary: null,
   dictionaryStatus: "idle",
+  dictionaryError: null,
   selectedTable: null,
   dictionaryActions: {
     fetchDictionary: async (projectId: string) => {
-      set({ dictionaryStatus: "loading" })
+      set({ dictionaryStatus: "loading", dictionaryError: null })
       try {
         const data = await api.get<DataDictionary>(
           `/api/projects/${projectId}/data-dictionary/`
         )
-        set({ dataDictionary: data, dictionaryStatus: "loaded" })
-      } catch {
-        set({ dictionaryStatus: "error" })
+        set({ dataDictionary: data, dictionaryStatus: "loaded", dictionaryError: null })
+      } catch (error) {
+        set({
+          dictionaryStatus: "error",
+          dictionaryError: error instanceof Error ? error.message : "Failed to load data dictionary",
+        })
       }
     },
 
     refreshSchema: async (projectId: string) => {
-      set({ dictionaryStatus: "loading" })
+      set({ dictionaryStatus: "loading", dictionaryError: null })
       try {
         const data = await api.post<DataDictionary>(
           `/api/projects/${projectId}/refresh-schema/`
         )
-        set({ dataDictionary: data, dictionaryStatus: "loaded" })
-      } catch {
-        set({ dictionaryStatus: "error" })
+        set({ dataDictionary: data, dictionaryStatus: "loaded", dictionaryError: null })
+      } catch (error) {
+        set({
+          dictionaryStatus: "error",
+          dictionaryError: error instanceof Error ? error.message : "Failed to refresh schema",
+        })
       }
     },
 

@@ -3,7 +3,12 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import type { KnowledgeItem, KnowledgeType } from "@/store/knowledgeSlice"
+import {
+  getKnowledgeItemName,
+  type KnowledgeItem,
+  type KnowledgeType,
+  type LearningItem,
+} from "@/store/knowledgeSlice"
 
 interface KnowledgeListProps {
   items: KnowledgeItem[]
@@ -31,28 +36,29 @@ const typeBadgeStyles: Record<KnowledgeType, string> = {
   learning: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
 }
 
-function getItemTitle(item: KnowledgeItem): string {
-  if (item.name) return item.name
-  if (item.description) return item.description.slice(0, 50) + (item.description.length > 50 ? "..." : "")
-  if (item.rule_text) return item.rule_text.slice(0, 50) + (item.rule_text.length > 50 ? "..." : "")
-  if (item.correction) return item.correction.slice(0, 50) + (item.correction.length > 50 ? "..." : "")
-  return `${item.type} item`
+function getItemDescription(item: KnowledgeItem): string | null {
+  switch (item.type) {
+    case "metric":
+      return item.sql_template ? `SQL: ${item.sql_template.slice(0, 100)}...` : item.definition || null
+    case "rule":
+      return item.description || null
+    case "query":
+      return item.sql ? `SQL: ${item.sql.slice(0, 100)}...` : item.description || null
+    case "learning":
+      return item.corrected_sql ? `Corrected: ${item.corrected_sql.slice(0, 100)}...` : null
+  }
 }
 
-function getItemDescription(item: KnowledgeItem): string | null {
-  if (item.type === "metric") {
-    return item.sql_template ? `SQL: ${item.sql_template.slice(0, 100)}...` : null
+function getRelatedTables(item: KnowledgeItem): string[] {
+  switch (item.type) {
+    case "rule":
+    case "learning":
+      return item.applies_to_tables || []
+    case "query":
+      return item.tables_used || []
+    default:
+      return []
   }
-  if (item.type === "rule") {
-    return item.rule_text || null
-  }
-  if (item.type === "query") {
-    return item.sql ? `SQL: ${item.sql.slice(0, 100)}...` : item.description || null
-  }
-  if (item.type === "learning") {
-    return item.correction || null
-  }
-  return null
 }
 
 export function KnowledgeList({
@@ -99,7 +105,13 @@ export function KnowledgeList({
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {items.map((item) => (
+          {items.map((item) => {
+            const title = getKnowledgeItemName(item)
+            const relatedTables = getRelatedTables(item)
+            const isLearning = item.type === "learning"
+            const learningItem = isLearning ? (item as LearningItem) : null
+
+            return (
             <Card key={item.id} className="flex flex-col">
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
@@ -111,14 +123,14 @@ export function KnowledgeList({
                       >
                         {item.type}
                       </Badge>
-                      {item.type === "learning" && item.confidence !== undefined && (
+                      {learningItem?.confidence_score !== undefined && (
                         <span className="text-xs text-muted-foreground">
-                          {Math.round(item.confidence * 100)}% confidence
+                          {Math.round(learningItem.confidence_score * 100)}% confidence
                         </span>
                       )}
                     </div>
-                    <h3 className="font-medium truncate" title={getItemTitle(item)}>
-                      {getItemTitle(item)}
+                    <h3 className="font-medium truncate" title={title}>
+                      {title}
                     </h3>
                   </div>
                 </div>
@@ -131,23 +143,23 @@ export function KnowledgeList({
                 )}
 
                 {/* Related Tables */}
-                {item.related_tables && item.related_tables.length > 0 && (
+                {relatedTables.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-3">
-                    {item.related_tables.slice(0, 3).map((table) => (
+                    {relatedTables.slice(0, 3).map((table) => (
                       <Badge key={table} variant="outline" className="text-xs">
                         {table}
                       </Badge>
                     ))}
-                    {item.related_tables.length > 3 && (
+                    {relatedTables.length > 3 && (
                       <Badge variant="outline" className="text-xs">
-                        +{item.related_tables.length - 3}
+                        +{relatedTables.length - 3}
                       </Badge>
                     )}
                   </div>
                 )}
 
-                {/* Tags for queries */}
-                {item.type === "query" && item.tags && item.tags.length > 0 && (
+                {/* Tags for items that have them */}
+                {item.tags && item.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-3">
                     {item.tags.slice(0, 3).map((tag) => (
                       <Badge key={tag} variant="secondary" className="text-xs">
@@ -163,15 +175,15 @@ export function KnowledgeList({
                 )}
 
                 {/* Promoted indicator for learnings */}
-                {item.type === "learning" && item.promoted_to && (
+                {learningItem?.promoted_to && (
                   <p className="text-xs text-green-600 dark:text-green-400 mb-3">
-                    Promoted to {item.promoted_to}
+                    Promoted to {learningItem.promoted_to}
                   </p>
                 )}
 
                 {/* Actions */}
                 <div className="mt-auto flex items-center gap-2 pt-2 border-t">
-                  {item.type === "learning" && !item.promoted_to ? (
+                  {learningItem && !learningItem.promoted_to ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -181,7 +193,7 @@ export function KnowledgeList({
                       <ArrowUpCircle className="mr-1 h-4 w-4" />
                       Promote
                     </Button>
-                  ) : item.type !== "learning" ? (
+                  ) : !isLearning ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -203,7 +215,8 @@ export function KnowledgeList({
                 </div>
               </CardContent>
             </Card>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

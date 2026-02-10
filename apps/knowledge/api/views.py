@@ -6,11 +6,8 @@ Provides endpoints for listing, creating, updating, and deleting knowledge items
 interface and type-specific operations.
 """
 import logging
-from itertools import chain
-from operator import attrgetter
 
 from django.db.models import Q
-from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -22,7 +19,7 @@ from apps.knowledge.models import (
     CanonicalMetric,
     VerifiedQuery,
 )
-from apps.projects.models import Project, ProjectMembership, ProjectRole
+from apps.projects.api.permissions import ProjectPermissionMixin
 
 from .serializers import (
     AgentLearningSerializer,
@@ -33,6 +30,10 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Pagination settings
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
 
 
 # Mapping of type names to models and serializers
@@ -60,71 +61,6 @@ KNOWLEDGE_TYPES = {
 }
 
 
-class ProjectPermissionMixin:
-    """
-    Mixin providing permission checking for project operations.
-
-    Provides methods to check if a user has access to a project
-    and if they have admin permissions.
-    """
-
-    def get_project(self, project_id):
-        """Retrieve a project by ID."""
-        return get_object_or_404(
-            Project.objects.prefetch_related("memberships"),
-            pk=project_id,
-        )
-
-    def get_user_membership(self, user, project):
-        """Get the user's membership in a project, if any."""
-        if user.is_superuser:
-            return None  # Superusers have implicit access
-        return ProjectMembership.objects.filter(
-            user=user,
-            project=project,
-        ).first()
-
-    def check_project_access(self, request, project):
-        """
-        Check if the user has any access to the project.
-
-        Returns:
-            tuple: (has_access: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership:
-            return True, None
-
-        return False, Response(
-            {"error": "You do not have access to this project."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    def check_edit_permission(self, request, project):
-        """
-        Check if the user has edit permission for the project.
-
-        Editors and admins can edit knowledge items.
-
-        Returns:
-            tuple: (can_edit: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership and membership.role in [ProjectRole.ADMIN, ProjectRole.EDITOR]:
-            return True, None
-
-        return False, Response(
-            {"error": "You must be a project editor or admin to perform this action."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-
 class KnowledgeListCreateView(ProjectPermissionMixin, APIView):
     """
     List all knowledge items or create a new one.
@@ -145,7 +81,7 @@ class KnowledgeListCreateView(ProjectPermissionMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        """List all knowledge items for a project."""
+        """List all knowledge items for a project with pagination."""
         project = self.get_project(project_id)
 
         has_access, error_response = self.check_project_access(request, project)
@@ -155,6 +91,20 @@ class KnowledgeListCreateView(ProjectPermissionMixin, APIView):
         # Get filter parameters
         type_filter = request.query_params.get("type")
         search_query = request.query_params.get("search", "").strip()
+
+        # Get pagination parameters
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+        except (ValueError, TypeError):
+            page = 1
+
+        try:
+            page_size = min(
+                MAX_PAGE_SIZE,
+                max(1, int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))),
+            )
+        except (ValueError, TypeError):
+            page_size = DEFAULT_PAGE_SIZE
 
         # Determine which types to query
         if type_filter and type_filter in KNOWLEDGE_TYPES:
@@ -187,7 +137,26 @@ class KnowledgeListCreateView(ProjectPermissionMixin, APIView):
         # Sort by created_at descending (most recent first)
         all_items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
-        return Response(all_items)
+        # Apply pagination
+        total_count = len(all_items)
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        paginated_items = all_items[start_index:end_index]
+
+        # Calculate pagination metadata
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+
+        return Response({
+            "results": paginated_items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1,
+            },
+        })
 
     def post(self, request, project_id):
         """Create a new knowledge item."""

@@ -1,6 +1,12 @@
 import { useEffect } from "react"
 import { useAppStore } from "@/store/store"
-import { Select } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export function ProjectSelector() {
   const projects = useAppStore((s) => s.projects)
@@ -16,8 +22,8 @@ export function ProjectSelector() {
     }
   }, [projectsStatus, fetchProjects])
 
-  function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    setActiveProject(e.target.value)
+  function handleChange(value: string) {
+    setActiveProject(value)
     newThread() // Reset conversation on project switch
   }
 
@@ -30,11 +36,17 @@ export function ProjectSelector() {
   }
 
   return (
-    <Select
-      options={projects.map((p) => ({ value: p.id, label: `${p.name} (${p.role})` }))}
-      value={activeProjectId ?? ""}
-      onChange={handleChange}
-      className="w-56"
-    />
+    <Select value={activeProjectId ?? ""} onValueChange={handleChange}>
+      <SelectTrigger className="w-56">
+        <SelectValue placeholder="Select project" />
+      </SelectTrigger>
+      <SelectContent>
+        {projects.map((p) => (
+          <SelectItem key={p.id} value={p.id}>
+            {p.name} ({p.role})
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

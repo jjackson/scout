@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { Plus } from "lucide-react"
+import { Loader2, Plus } from "lucide-react"
 import { useAppStore } from "@/store/store"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -22,6 +21,7 @@ export function ProjectsPage() {
   const deleteProject = useAppStore((s) => s.projectActions.deleteProject)
 
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   useEffect(() => {
     if (projectsStatus === "idle") {
@@ -30,9 +30,14 @@ export function ProjectsPage() {
   }, [fetchProjects, projectsStatus])
 
   const handleDelete = async () => {
-    if (deleteId) {
-      await deleteProject(deleteId)
-      setDeleteId(null)
+    if (deleteId && !isDeleting) {
+      setIsDeleting(true)
+      try {
+        await deleteProject(deleteId)
+        setDeleteId(null)
+      } finally {
+        setIsDeleting(false)
+      }
     }
   }
 
@@ -76,7 +81,7 @@ export function ProjectsPage() {
         ))}
       </div>
 
-      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !isDeleting && !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Project</AlertDialogTitle>
@@ -86,8 +91,15 @@ export function ProjectsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

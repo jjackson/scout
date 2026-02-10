@@ -2,6 +2,7 @@ import { useEffect } from "react"
 import { Outlet } from "react-router-dom"
 import { useAppStore } from "@/store/store"
 import { Sidebar } from "@/components/Sidebar"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 export function AppLayout() {
   const fetchProjects = useAppStore((s) => s.projectActions.fetchProjects)
@@ -17,7 +18,9 @@ export function AppLayout() {
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex-1 overflow-auto">
-        <Outlet />
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   )

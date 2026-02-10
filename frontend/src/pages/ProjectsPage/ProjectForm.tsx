@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/accordion"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { api } from "@/api/client"
-import type { ProjectDetail } from "@/store/projectSlice"
+import type { ProjectFormData } from "@/store/projectSlice"
 
 interface ConnectionTestResult {
   success: boolean
@@ -87,7 +87,7 @@ export function ProjectForm() {
             db_port: project.db_port,
             db_name: project.db_name,
             db_user: project.db_user,
-            db_password: project.db_password ?? "",
+            db_password: "",  // Password is write-only, never returned from API
             allowed_schemas: project.allowed_schemas.join(", "),
             allowed_tables: project.allowed_tables.join(", "),
             blocked_tables: project.blocked_tables.join(", "),
@@ -153,7 +153,7 @@ export function ProjectForm() {
     setLoading(true)
     setError(null)
 
-    const projectData: Partial<ProjectDetail> = {
+    const projectData: ProjectFormData = {
       name: form.name,
       slug: form.slug,
       description: form.description,

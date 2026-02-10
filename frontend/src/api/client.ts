@@ -31,6 +31,11 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, body.error ?? res.statusText)
   }
 
+  // Handle 204 No Content (common for DELETE responses)
+  if (res.status === 204) {
+    return undefined as T
+  }
+
   return res.json() as Promise<T>
 }
 

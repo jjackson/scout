@@ -1,11 +1,10 @@
 import { useEffect, useState, useCallback } from "react"
 import { useNavigate, useParams, useLocation } from "react-router-dom"
-import { Plus } from "lucide-react"
+import { Loader2, Plus } from "lucide-react"
 import { useAppStore } from "@/store/store"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -41,6 +40,7 @@ export function KnowledgePage() {
   const [editItem, setEditItem] = useState<KnowledgeItem | null>(null)
   const [deleteItem, setDeleteItem] = useState<KnowledgeItem | null>(null)
   const [promoteItem, setPromoteItem] = useState<KnowledgeItem | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Check if we're on /knowledge/new
   const isNew = location.pathname.endsWith("/new")
@@ -48,7 +48,10 @@ export function KnowledgePage() {
   // Fetch knowledge on mount and when project/filter/search changes
   useEffect(() => {
     if (activeProjectId) {
-      fetchKnowledge(activeProjectId, knowledgeFilter ?? undefined, knowledgeSearch || undefined)
+      fetchKnowledge(activeProjectId, {
+        type: knowledgeFilter ?? undefined,
+        search: knowledgeSearch || undefined,
+      })
     }
   }, [activeProjectId, knowledgeFilter, knowledgeSearch, fetchKnowledge])
 
@@ -117,41 +120,27 @@ export function KnowledgePage() {
   }
 
   const handleConfirmDelete = async () => {
-    if (!activeProjectId || !deleteItem) return
+    if (!activeProjectId || !deleteItem || isDeleting) return
 
-    await deleteKnowledge(activeProjectId, deleteItem.id)
-    setDeleteItem(null)
+    setIsDeleting(true)
+    try {
+      await deleteKnowledge(activeProjectId, deleteItem.id)
+      setDeleteItem(null)
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
-  const handleConfirmPromote = async (data: { target_type: "rule" | "query"; name: string; [key: string]: unknown }) => {
+  const handleConfirmPromote = async (data: { promote_to: "business_rule" | "verified_query" }) => {
     if (!activeProjectId || !promoteItem) return
 
     await promoteKnowledge(activeProjectId, promoteItem.id, data)
     setPromoteItem(null)
   }
 
-  // Filter items locally based on current filter and search
-  const filteredItems = knowledgeItems.filter((item) => {
-    if (knowledgeFilter && item.type !== knowledgeFilter) return false
-    if (knowledgeSearch) {
-      const search = knowledgeSearch.toLowerCase()
-      const searchableText = [
-        item.name,
-        item.description,
-        item.rule_text,
-        item.sql_template,
-        item.sql,
-        item.correction,
-        ...(item.tags || []),
-        ...(item.related_tables || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-      return searchableText.includes(search)
-    }
-    return true
-  })
+  // The API now handles filtering and search, so we just use the items directly
+  // Local filtering is only a fallback for immediate UI response
+  const filteredItems = knowledgeItems
 
   if (!activeProjectId) {
     return (
@@ -222,7 +211,7 @@ export function KnowledgePage() {
       />
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteItem} onOpenChange={() => setDeleteItem(null)}>
+      <AlertDialog open={!!deleteItem} onOpenChange={(open) => !isDeleting && !open && setDeleteItem(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Knowledge Item</AlertDialogTitle>
@@ -232,8 +221,15 @@ export function KnowledgePage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

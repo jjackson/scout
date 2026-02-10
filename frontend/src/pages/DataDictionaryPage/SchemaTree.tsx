@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { ChevronDown, ChevronRight, Table2, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -14,7 +14,7 @@ export function SchemaTree({ dictionary, selectedTable, onSelectTable }: SchemaT
   const [searchQuery, setSearchQuery] = useState("")
   const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set())
 
-  const schemas = dictionary.schemas
+  const schemas = dictionary?.schemas || {}
 
   // Filter tables based on search query
   const filteredSchemas = useMemo(() => {
@@ -46,7 +46,7 @@ export function SchemaTree({ dictionary, selectedTable, onSelectTable }: SchemaT
   }, [schemas, searchQuery])
 
   // Auto-expand schemas when searching
-  useMemo(() => {
+  useEffect(() => {
     if (searchQuery.trim()) {
       setExpandedSchemas(new Set(Object.keys(filteredSchemas)))
     }

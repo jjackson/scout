@@ -9,12 +9,16 @@ export interface Project {
   role: string
 }
 
+/**
+ * Project details returned from the API.
+ * Note: db_password is write-only on the backend and is never returned.
+ */
 export interface ProjectDetail extends Project {
   db_host: string
   db_port: number
   db_name: string
   db_user: string
-  db_password?: string
+  // db_password is write-only, never returned from API
   allowed_schemas: string[]
   allowed_tables: string[]
   blocked_tables: string[]
@@ -22,6 +26,14 @@ export interface ProjectDetail extends Project {
   llm_model: string
   llm_temperature: number
   is_active: boolean
+}
+
+/**
+ * Data for creating or updating a project.
+ * db_password is only used for writes, never reads.
+ */
+export interface ProjectFormData extends Partial<ProjectDetail> {
+  db_password?: string
 }
 
 export interface ProjectMember {
@@ -38,14 +50,15 @@ export interface ProjectSlice {
   projects: Project[]
   activeProjectId: string | null
   projectsStatus: ProjectsStatus
+  projectsError: string | null
   currentProject: ProjectDetail | null
   projectMembers: ProjectMember[]
   projectActions: {
     fetchProjects: () => Promise<void>
     setActiveProject: (id: string) => void
     fetchProject: (id: string) => Promise<ProjectDetail>
-    createProject: (data: Partial<ProjectDetail>) => Promise<ProjectDetail>
-    updateProject: (id: string, data: Partial<ProjectDetail>) => Promise<ProjectDetail>
+    createProject: (data: ProjectFormData) => Promise<ProjectDetail>
+    updateProject: (id: string, data: ProjectFormData) => Promise<ProjectDetail>
     deleteProject: (id: string) => Promise<void>
     fetchMembers: (projectId: string) => Promise<void>
     addMember: (projectId: string, email: string, role: string) => Promise<void>
@@ -57,22 +70,27 @@ export const createProjectSlice: StateCreator<ProjectSlice, [], [], ProjectSlice
   projects: [],
   activeProjectId: null,
   projectsStatus: "idle",
+  projectsError: null,
   currentProject: null,
   projectMembers: [],
   projectActions: {
     fetchProjects: async () => {
-      set({ projectsStatus: "loading" })
+      set({ projectsStatus: "loading", projectsError: null })
       try {
         const projects = await api.get<Project[]>("/api/projects/")
         const activeProjectId = get().activeProjectId
         set({
           projects,
           projectsStatus: "loaded",
+          projectsError: null,
           // Auto-select first project if none selected
           activeProjectId: activeProjectId ?? (projects[0]?.id ?? null),
         })
-      } catch {
-        set({ projectsStatus: "error" })
+      } catch (error) {
+        set({
+          projectsStatus: "error",
+          projectsError: error instanceof Error ? error.message : "Failed to load projects",
+        })
       }
     },
 
@@ -91,14 +109,14 @@ export const createProjectSlice: StateCreator<ProjectSlice, [], [], ProjectSlice
       }
     },
 
-    createProject: async (data: Partial<ProjectDetail>) => {
+    createProject: async (data: ProjectFormData) => {
       const project = await api.post<ProjectDetail>("/api/projects/", data)
       const projects = get().projects
       set({ projects: [...projects, project] })
       return project
     },
 
-    updateProject: async (id: string, data: Partial<ProjectDetail>) => {
+    updateProject: async (id: string, data: ProjectFormData) => {
       const project = await api.put<ProjectDetail>(`/api/projects/${id}/`, data)
       const projects = get().projects.map((p) => (p.id === id ? { ...p, ...project } : p))
       set({

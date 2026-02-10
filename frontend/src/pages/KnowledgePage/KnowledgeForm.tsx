@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import type { KnowledgeItem, KnowledgeType } from "@/store/knowledgeSlice"
+import type { KnowledgeItem, KnowledgeType, LearningItem } from "@/store/knowledgeSlice"
 
 interface KnowledgeFormProps {
   open: boolean
@@ -31,26 +31,38 @@ interface KnowledgeFormProps {
 
 interface FormState {
   type: KnowledgeType
+  // Metric fields
   name: string
-  description: string
+  definition: string
   sql_template: string
-  rule_text: string
-  context: string
+  unit: string
+  owner: string
+  caveats: string
+  // Rule fields
+  title: string
+  description: string
+  // Query fields
   sql: string
+  // Shared fields
   tags: string
-  related_tables: string
+  applies_to_tables: string
+  tables_used: string
 }
 
 const initialFormState: FormState = {
   type: "metric",
   name: "",
-  description: "",
+  definition: "",
   sql_template: "",
-  rule_text: "",
-  context: "",
+  unit: "",
+  owner: "",
+  caveats: "",
+  title: "",
+  description: "",
   sql: "",
   tags: "",
-  related_tables: "",
+  applies_to_tables: "",
+  tables_used: "",
 }
 
 const typeLabels: Record<KnowledgeType, string> = {
@@ -70,17 +82,32 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
 
   useEffect(() => {
     if (item) {
-      setForm({
+      // Map item fields to form state based on type
+      const formData: FormState = {
+        ...initialFormState,
         type: item.type,
-        name: item.name || "",
-        description: item.description || "",
-        sql_template: item.sql_template || "",
-        rule_text: item.rule_text || "",
-        context: item.context || "",
-        sql: item.sql || "",
         tags: item.tags?.join(", ") || "",
-        related_tables: item.related_tables?.join(", ") || "",
-      })
+      }
+
+      if (item.type === "metric") {
+        formData.name = item.name || ""
+        formData.definition = item.definition || ""
+        formData.sql_template = item.sql_template || ""
+        formData.unit = item.unit || ""
+        formData.owner = item.owner || ""
+        formData.caveats = item.caveats || ""
+      } else if (item.type === "rule") {
+        formData.title = item.title || ""
+        formData.description = item.description || ""
+        formData.applies_to_tables = item.applies_to_tables?.join(", ") || ""
+      } else if (item.type === "query") {
+        formData.name = item.name || ""
+        formData.description = item.description || ""
+        formData.sql = item.sql || ""
+        formData.tables_used = item.tables_used?.join(", ") || ""
+      }
+
+      setForm(formData)
     } else {
       setForm(initialFormState)
     }
@@ -111,25 +138,31 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
     setError(null)
 
     try {
-      const data: Partial<KnowledgeItem> & { type: KnowledgeType } = {
+      // Build type-specific data object
+      // We use 'any' here because the union type makes it hard to build dynamically
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data: any = {
         type: form.type,
-        related_tables: parseCommaSeparated(form.related_tables),
+        tags: parseCommaSeparated(form.tags),
       }
 
       // Add type-specific fields
       if (form.type === "metric") {
         data.name = form.name
-        data.description = form.description || undefined
+        data.definition = form.definition || undefined
         data.sql_template = form.sql_template
+        data.unit = form.unit || undefined
+        data.owner = form.owner || undefined
+        data.caveats = form.caveats || undefined
       } else if (form.type === "rule") {
-        data.name = form.name
-        data.rule_text = form.rule_text
-        data.context = form.context || undefined
+        data.title = form.title
+        data.description = form.description || undefined
+        data.applies_to_tables = parseCommaSeparated(form.applies_to_tables)
       } else if (form.type === "query") {
         data.name = form.name
         data.description = form.description || undefined
         data.sql = form.sql
-        data.tags = parseCommaSeparated(form.tags)
+        data.tables_used = parseCommaSeparated(form.tables_used)
       }
 
       await onSave(data)
@@ -142,7 +175,8 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
   }
 
   // Learning items are view-only
-  if (isLearning && item) {
+  if (isLearning && item && item.type === "learning") {
+    const learningItem = item as LearningItem
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl">
@@ -154,46 +188,55 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
           </DialogHeader>
 
           <div className="space-y-4">
-            {item.correction && (
+            {learningItem.description && (
               <div className="space-y-2">
-                <Label>Correction</Label>
+                <Label>Description</Label>
                 <div className="rounded-md border p-3 bg-muted/50 text-sm">
-                  {item.correction}
+                  {learningItem.description}
                 </div>
               </div>
             )}
 
-            {item.context && (
+            {learningItem.corrected_sql && (
               <div className="space-y-2">
-                <Label>Context</Label>
-                <div className="rounded-md border p-3 bg-muted/50 text-sm">
-                  {item.context}
+                <Label>Corrected SQL</Label>
+                <div className="rounded-md border p-3 bg-muted/50 text-sm font-mono">
+                  {learningItem.corrected_sql}
                 </div>
               </div>
             )}
 
-            {item.confidence !== undefined && (
+            {learningItem.original_error && (
+              <div className="space-y-2">
+                <Label>Original Error</Label>
+                <div className="rounded-md border p-3 bg-muted/50 text-sm text-destructive">
+                  {learningItem.original_error}
+                </div>
+              </div>
+            )}
+
+            {learningItem.confidence_score !== undefined && (
               <div className="space-y-2">
                 <Label>Confidence</Label>
                 <div className="flex items-center gap-2">
                   <div className="h-2 flex-1 rounded-full bg-muted">
                     <div
                       className="h-2 rounded-full bg-primary"
-                      style={{ width: `${item.confidence * 100}%` }}
+                      style={{ width: `${learningItem.confidence_score * 100}%` }}
                     />
                   </div>
                   <span className="text-sm font-medium">
-                    {Math.round(item.confidence * 100)}%
+                    {Math.round(learningItem.confidence_score * 100)}%
                   </span>
                 </div>
               </div>
             )}
 
-            {item.related_tables && item.related_tables.length > 0 && (
+            {learningItem.applies_to_tables && learningItem.applies_to_tables.length > 0 && (
               <div className="space-y-2">
                 <Label>Related Tables</Label>
                 <div className="flex flex-wrap gap-1">
-                  {item.related_tables.map((table) => (
+                  {learningItem.applies_to_tables.map((table) => (
                     <Badge key={table} variant="outline">
                       {table}
                     </Badge>
@@ -202,10 +245,10 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
               </div>
             )}
 
-            {item.promoted_to && (
+            {learningItem.promoted_to && (
               <div className="rounded-md border border-green-200 bg-green-50 p-3 dark:border-green-800 dark:bg-green-900/20">
                 <p className="text-sm text-green-800 dark:text-green-400">
-                  This learning has been promoted to: <strong>{item.promoted_to}</strong>
+                  This learning has been promoted to: <strong>{learningItem.promoted_to}</strong>
                 </p>
               </div>
             )}
@@ -277,11 +320,11 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
             {form.type === "metric" && (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
+                  <Label htmlFor="definition">Definition</Label>
                   <Textarea
-                    id="description"
-                    name="description"
-                    value={form.description}
+                    id="definition"
+                    name="definition"
+                    value={form.definition}
                     onChange={handleChange}
                     placeholder="Describe what this metric measures"
                     rows={2}
@@ -297,11 +340,32 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
                     placeholder="SELECT COUNT(*) FROM orders WHERE ..."
                     rows={4}
                     className="font-mono text-sm"
-                    required
                   />
                   <p className="text-xs text-muted-foreground">
                     Use placeholders like {"{start_date}"} for dynamic values
                   </p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="unit">Unit</Label>
+                    <Input
+                      id="unit"
+                      name="unit"
+                      value={form.unit}
+                      onChange={handleChange}
+                      placeholder="e.g., USD, %, count"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="owner">Owner</Label>
+                    <Input
+                      id="owner"
+                      name="owner"
+                      value={form.owner}
+                      onChange={handleChange}
+                      placeholder="Team or person"
+                    />
+                  </div>
                 </div>
               </>
             )}
@@ -310,27 +374,39 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
             {form.type === "rule" && (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="rule_text">Rule Text</Label>
-                  <Textarea
-                    id="rule_text"
-                    name="rule_text"
-                    value={form.rule_text}
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    name="title"
+                    value={form.title}
                     onChange={handleChange}
-                    placeholder="Always use LEFT JOIN when joining with optional tables..."
-                    rows={3}
+                    placeholder="Rule title"
                     required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="context">Context</Label>
+                  <Label htmlFor="description">Description</Label>
                   <Textarea
-                    id="context"
-                    name="context"
-                    value={form.context}
+                    id="description"
+                    name="description"
+                    value={form.description}
                     onChange={handleChange}
-                    placeholder="When this rule should be applied"
-                    rows={2}
+                    placeholder="Always use LEFT JOIN when joining with optional tables..."
+                    rows={3}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="applies_to_tables">Applies to Tables</Label>
+                  <Input
+                    id="applies_to_tables"
+                    name="applies_to_tables"
+                    value={form.applies_to_tables}
+                    onChange={handleChange}
+                    placeholder="users, orders, products"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated list of tables this rule applies to
+                  </p>
                 </div>
               </>
             )}
@@ -363,33 +439,33 @@ export function KnowledgeForm({ open, onOpenChange, item, onSave }: KnowledgeFor
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="tags">Tags</Label>
+                  <Label htmlFor="tables_used">Tables Used</Label>
                   <Input
-                    id="tags"
-                    name="tags"
-                    value={form.tags}
+                    id="tables_used"
+                    name="tables_used"
+                    value={form.tables_used}
                     onChange={handleChange}
-                    placeholder="reporting, sales, monthly"
+                    placeholder="users, orders, products"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Comma-separated list of tags
+                    Comma-separated list of tables used in the query
                   </p>
                 </div>
               </>
             )}
 
-            {/* Related tables (for all types) */}
+            {/* Tags (for all types) */}
             <div className="space-y-2">
-              <Label htmlFor="related_tables">Related Tables</Label>
+              <Label htmlFor="tags">Tags</Label>
               <Input
-                id="related_tables"
-                name="related_tables"
-                value={form.related_tables}
+                id="tags"
+                name="tags"
+                value={form.tags}
                 onChange={handleChange}
-                placeholder="users, orders, products"
+                placeholder="reporting, sales, monthly"
               />
               <p className="text-xs text-muted-foreground">
-                Comma-separated list of related database tables
+                Comma-separated list of tags for categorization
               </p>
             </div>
           </div>
@@ -417,23 +493,17 @@ interface PromoteDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   item: KnowledgeItem | null
-  onPromote: (data: { target_type: "rule" | "query"; name: string; [key: string]: unknown }) => Promise<void>
+  onPromote: (data: { promote_to: "business_rule" | "verified_query" }) => Promise<void>
 }
 
 export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDialogProps) {
-  const [targetType, setTargetType] = useState<"rule" | "query">("rule")
-  const [name, setName] = useState("")
-  const [ruleText, setRuleText] = useState("")
-  const [sql, setSql] = useState("")
+  const [targetType, setTargetType] = useState<"business_rule" | "verified_query">("business_rule")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (item) {
-      setName("")
-      setRuleText(item.correction || "")
-      setSql("")
-      setTargetType("rule")
+      setTargetType("business_rule")
     }
     setError(null)
   }, [item, open])
@@ -444,18 +514,7 @@ export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDi
     setError(null)
 
     try {
-      const data: { target_type: "rule" | "query"; name: string; [key: string]: unknown } = {
-        target_type: targetType,
-        name,
-      }
-
-      if (targetType === "rule") {
-        data.rule_text = ruleText
-      } else {
-        data.sql = sql
-      }
-
-      await onPromote(data)
+      await onPromote({ promote_to: targetType })
       onOpenChange(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to promote learning")
@@ -464,7 +523,9 @@ export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDi
     }
   }
 
-  if (!item) return null
+  if (!item || item.type !== "learning") return null
+
+  const learningItem = item as LearningItem
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -472,7 +533,7 @@ export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDi
         <DialogHeader>
           <DialogTitle>Promote Learning</DialogTitle>
           <DialogDescription>
-            Convert this learning into a permanent rule or query
+            Convert this learning into a permanent business rule or verified query
           </DialogDescription>
         </DialogHeader>
 
@@ -484,64 +545,39 @@ export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDi
           )}
 
           {/* Original learning content */}
-          {item.correction && (
-            <div className="mb-4 rounded-md border bg-muted/50 p-3">
-              <Label className="text-xs text-muted-foreground">Original Learning</Label>
-              <p className="mt-1 text-sm">{item.correction}</p>
-            </div>
-          )}
+          <div className="mb-4 space-y-3">
+            {learningItem.description && (
+              <div className="rounded-md border bg-muted/50 p-3">
+                <Label className="text-xs text-muted-foreground">Description</Label>
+                <p className="mt-1 text-sm">{learningItem.description}</p>
+              </div>
+            )}
+            {learningItem.corrected_sql && (
+              <div className="rounded-md border bg-muted/50 p-3">
+                <Label className="text-xs text-muted-foreground">Corrected SQL</Label>
+                <p className="mt-1 text-sm font-mono">{learningItem.corrected_sql}</p>
+              </div>
+            )}
+          </div>
 
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="target_type">Promote To</Label>
-              <Select value={targetType} onValueChange={(v) => setTargetType(v as "rule" | "query")}>
+              <Select value={targetType} onValueChange={(v) => setTargetType(v as "business_rule" | "verified_query")}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="rule">Rule</SelectItem>
-                  <SelectItem value="query">Query</SelectItem>
+                  <SelectItem value="business_rule">Business Rule</SelectItem>
+                  <SelectItem value="verified_query">Verified Query</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {targetType === "business_rule"
+                  ? "Creates a business rule from this learning's description"
+                  : "Creates a verified query from this learning's corrected SQL"}
+              </p>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={`Enter ${targetType} name`}
-                required
-              />
-            </div>
-
-            {targetType === "rule" ? (
-              <div className="space-y-2">
-                <Label htmlFor="rule_text">Rule Text</Label>
-                <Textarea
-                  id="rule_text"
-                  value={ruleText}
-                  onChange={(e) => setRuleText(e.target.value)}
-                  placeholder="Enter the rule text"
-                  rows={4}
-                  required
-                />
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Label htmlFor="sql">SQL</Label>
-                <Textarea
-                  id="sql"
-                  value={sql}
-                  onChange={(e) => setSql(e.target.value)}
-                  placeholder="Enter the SQL query"
-                  rows={4}
-                  className="font-mono text-sm"
-                  required
-                />
-              </div>
-            )}
           </div>
 
           <DialogFooter className="mt-6">
@@ -554,7 +590,7 @@ export function PromoteDialog({ open, onOpenChange, item, onPromote }: PromoteDi
             </Button>
             <Button type="submit" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Promote to {targetType === "rule" ? "Rule" : "Query"}
+              Promote to {targetType === "business_rule" ? "Business Rule" : "Verified Query"}
             </Button>
           </DialogFooter>
         </form>

@@ -43,6 +43,7 @@ export type RecipeStatus = "idle" | "loading" | "loaded" | "error"
 export interface RecipeSlice {
   recipes: Recipe[]
   recipeStatus: RecipeStatus
+  recipeError: string | null
   currentRecipe: Recipe | null
   recipeRuns: RecipeRun[]
   recipeActions: {
@@ -58,16 +59,20 @@ export interface RecipeSlice {
 export const createRecipeSlice: StateCreator<RecipeSlice, [], [], RecipeSlice> = (set, get) => ({
   recipes: [],
   recipeStatus: "idle",
+  recipeError: null,
   currentRecipe: null,
   recipeRuns: [],
   recipeActions: {
     fetchRecipes: async (projectId: string) => {
-      set({ recipeStatus: "loading" })
+      set({ recipeStatus: "loading", recipeError: null })
       try {
         const recipes = await api.get<Recipe[]>(`/api/projects/${projectId}/recipes/`)
-        set({ recipes, recipeStatus: "loaded" })
-      } catch {
-        set({ recipeStatus: "error" })
+        set({ recipes, recipeStatus: "loaded", recipeError: null })
+      } catch (error) {
+        set({
+          recipeStatus: "error",
+          recipeError: error instanceof Error ? error.message : "Failed to load recipes",
+        })
       }
     },
 

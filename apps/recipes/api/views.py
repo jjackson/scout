@@ -13,7 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.projects.models import Project, ProjectMembership, ProjectRole
+from apps.projects.api.permissions import ProjectPermissionMixin
 from apps.recipes.models import Recipe, RecipeRun, RecipeRunStatus
 
 from .serializers import (
@@ -27,20 +27,12 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-class RecipePermissionMixin:
+class RecipePermissionMixin(ProjectPermissionMixin):
     """
-    Mixin providing permission checking for recipe operations.
+    Extended permission mixin for recipe operations.
 
-    Provides methods to check if a user has access to a project
-    and if they have admin permissions.
+    Adds recipe-specific helper methods on top of base project permissions.
     """
-
-    def get_project(self, project_id):
-        """Retrieve a project by ID."""
-        return get_object_or_404(
-            Project.objects.prefetch_related("memberships"),
-            pk=project_id,
-        )
 
     def get_recipe(self, project, recipe_id):
         """Retrieve a recipe by ID within a project."""
@@ -48,53 +40,6 @@ class RecipePermissionMixin:
             Recipe.objects.prefetch_related("steps"),
             pk=recipe_id,
             project=project,
-        )
-
-    def get_user_membership(self, user, project):
-        """Get the user's membership in a project, if any."""
-        if user.is_superuser:
-            return None  # Superusers have implicit access
-        return ProjectMembership.objects.filter(
-            user=user,
-            project=project,
-        ).first()
-
-    def check_project_access(self, request, project):
-        """
-        Check if the user has any access to the project.
-
-        Returns:
-            tuple: (has_access: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership:
-            return True, None
-
-        return False, Response(
-            {"error": "You do not have access to this project."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    def check_admin_permission(self, request, project):
-        """
-        Check if the user has admin permission for the project.
-
-        Returns:
-            tuple: (is_admin: bool, error_response: Response or None)
-        """
-        if request.user.is_superuser:
-            return True, None
-
-        membership = self.get_user_membership(request.user, project)
-        if membership and membership.role == ProjectRole.ADMIN:
-            return True, None
-
-        return False, Response(
-            {"error": "You must be a project admin to perform this action."},
-            status=status.HTTP_403_FORBIDDEN,
         )
 
 
@@ -156,8 +101,9 @@ class RecipeDetailView(RecipePermissionMixin, APIView):
         """Update a recipe."""
         project = self.get_project(project_id)
 
-        has_access, error_response = self.check_project_access(request, project)
-        if not has_access:
+        # Require analyst or admin permission to edit recipes
+        can_edit, error_response = self.check_edit_permission(request, project)
+        if not can_edit:
             return error_response
 
         recipe = self.get_recipe(project, recipe_id)
