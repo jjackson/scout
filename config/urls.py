@@ -15,7 +15,7 @@ urlpatterns = [
     path("api/chat/", include("apps.chat.urls")),
     path("api/auth/", include("apps.chat.auth_urls")),
     path("api/projects/", include("apps.projects.urls")),
-    path("api/knowledge/", include("apps.knowledge.urls")),
+    path("api/projects/<uuid:project_id>/knowledge/", include("apps.knowledge.urls")),
     path("api/artifacts/", include("apps.artifacts.urls")),
     path("api/recipes/", include("apps.recipes.urls")),
 ]
