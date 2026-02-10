@@ -825,12 +825,12 @@ When credential expired:
 
 ---
 
-## Open Questions
+## Design Decisions
 
-1. **Incremental sync**: Should connectors support incremental updates (only new/changed records) or always full refresh?
+1. **Incremental sync**: **Full refresh** - Drop and recreate tables each sync. Simpler implementation, guaranteed consistency. Acceptable given daily refresh cadence and 24h data retention.
 
-2. **Schema versioning**: How to handle schema changes when the source API changes fields?
+2. **Schema versioning**: **Schema follows data** - Connector infers schema from API response each sync. Tables are recreated with whatever fields come back. No explicit schema definitions to maintain.
 
-3. **Multi-tenant database**: Should materialized data go in the same database as the project's main data, or a separate "staging" database?
+3. **Multi-tenant database**: **Same database** - Materialized schemas live alongside the project's main schema. Enables joins between materialized and existing data. Agent's search_path includes all relevant schemas.
 
-4. **Rate limiting**: How to handle API rate limits during large syncs?
+4. **Rate limiting**: **Pause and resume** - Save sync progress, pause the job when rate limited, automatically resume after the rate limit window expires. Resilient to long rate limit windows without losing progress.
