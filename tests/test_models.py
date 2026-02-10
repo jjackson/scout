@@ -6,11 +6,9 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 
 from apps.projects.models import (
-    ConversationLog,
     Project,
     ProjectMembership,
     ProjectRole,
-    SavedQuery,
 )
 from apps.knowledge.models import (
     AgentLearning,

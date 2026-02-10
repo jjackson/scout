@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 import chainlit as cl
 from asgiref.sync import sync_to_async
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
 
 # Setup Django before importing Django models
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
@@ -44,20 +43,57 @@ from chainlit_app.auth import get_django_user
 import chainlit_app.auth  # noqa: F401
 
 if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+
     from apps.users.models import User
 
 logger = logging.getLogger(__name__)
 
-# Checkpointer selection based on environment
-# In development: use MemorySaver (fast, no setup required)
-# In production: use PostgresSaver for conversation persistence
-_USE_POSTGRES_CHECKPOINTER = os.environ.get("USE_POSTGRES_CHECKPOINTER", "").lower() in (
-    "1", "true", "yes"
-)
+# Persistent checkpointer singleton — initialized lazily on first use.
+# Uses AsyncPostgresSaver for durable conversation persistence, falling
+# back to MemorySaver when PostgreSQL is unavailable.
+_checkpointer: "BaseCheckpointSaver | None" = None
 
-# Global checkpointer instance for sync operations
-# For async operations with PostgresSaver, use get_postgres_checkpointer() context manager
-memory_checkpointer = MemorySaver()
+
+async def _ensure_checkpointer() -> "BaseCheckpointSaver":
+    """
+    Lazily initialize and return the persistent PostgreSQL checkpointer.
+
+    On first call, creates an AsyncPostgresSaver connected to the platform
+    database and runs setup (creating checkpoint tables if needed). The
+    checkpointer is stored as a module-level singleton and reused for all
+    sessions for the lifetime of the process.
+
+    Falls back to MemorySaver if PostgreSQL is unavailable.
+    """
+    global _checkpointer
+    if _checkpointer is not None:
+        return _checkpointer
+
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        from apps.agents.memory.checkpointer import get_database_url
+
+        database_url = get_database_url()
+        # Create the checkpointer and hold the connection pool open for
+        # the lifetime of the Chainlit process.
+        saver_cm = AsyncPostgresSaver.from_conn_string(database_url)
+        checkpointer = await saver_cm.__aenter__()
+        await checkpointer.setup()
+        _checkpointer = checkpointer
+        logger.info("PostgreSQL checkpointer initialized for conversation persistence")
+    except Exception as e:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        logger.warning(
+            "PostgreSQL checkpointer unavailable, falling back to MemorySaver. "
+            "Conversations will NOT persist across restarts. Error: %s",
+            e,
+        )
+        _checkpointer = MemorySaver()
+
+    return _checkpointer
 
 
 @cl.on_chat_start
@@ -252,10 +288,11 @@ async def setup_project(project_id: str) -> bool:
     logger.info("Building agent for project: %s", project.slug)
 
     try:
+        checkpointer = await _ensure_checkpointer()
         agent = await sync_to_async(build_agent_graph)(
             project=project,
             user=django_user,
-            checkpointer=memory_checkpointer,
+            checkpointer=checkpointer,
         )
     except Exception as e:
         logger.exception("Failed to build agent for project %s: %s", project.slug, e)

@@ -1,7 +1,7 @@
 """
 Core project models for Scout data agent platform.
 
-Defines Project, ProjectMembership, SavedQuery, and ConversationLog models.
+Defines Project and ProjectMembership models.
 """
 import uuid
 
@@ -190,52 +190,3 @@ class ProjectMembership(models.Model):
         return f"{self.user} - {self.project} ({self.role})"
 
 
-class SavedQuery(models.Model):
-    """
-    Queries that users can save and re-run.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="saved_queries")
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    sql = models.TextField()
-    is_shared = models.BooleanField(default=False, help_text="Visible to all project members")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-updated_at"]
-        verbose_name_plural = "Saved queries"
-        indexes = [
-            models.Index(fields=["project", "-updated_at"]),
-        ]
-
-    def __str__(self):
-        return f"{self.name} ({self.project.name})"
-
-
-class ConversationLog(models.Model):
-    """
-    Stores conversation history for audit and memory.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="conversations")
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    thread_id = models.CharField(max_length=255, db_index=True)
-    messages = models.JSONField(default=list)
-    # Track which queries were executed in this conversation
-    queries_executed = models.JSONField(default=list)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-updated_at"]
-        indexes = [
-            models.Index(fields=["project", "user", "-created_at"]),
-        ]
-
-    def __str__(self):
-        return f"Conversation {self.thread_id} ({self.project.name})"

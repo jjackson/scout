@@ -4,7 +4,7 @@ Admin configuration for Project models.
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import ConversationLog, Project, ProjectMembership, SavedQuery
+from .models import Project, ProjectMembership
 
 
 class ProjectMembershipInline(admin.TabularInline):
@@ -174,26 +174,3 @@ class ProjectMembershipAdmin(admin.ModelAdmin):
     autocomplete_fields = ["user", "project"]
 
 
-@admin.register(SavedQuery)
-class SavedQueryAdmin(admin.ModelAdmin):
-    """Admin interface for SavedQuery model."""
-
-    list_display = ["name", "project", "created_by", "is_shared", "updated_at"]
-    list_filter = ["is_shared", "created_at", "project"]
-    search_fields = ["name", "description", "sql"]
-    autocomplete_fields = ["project", "created_by"]
-
-
-@admin.register(ConversationLog)
-class ConversationLogAdmin(admin.ModelAdmin):
-    """Admin interface for ConversationLog model."""
-
-    list_display = ["thread_id", "project", "user", "message_count", "created_at"]
-    list_filter = ["created_at", "project"]
-    search_fields = ["thread_id", "user__email"]
-    readonly_fields = ["id", "thread_id", "messages", "queries_executed", "created_at", "updated_at"]
-    autocomplete_fields = ["project", "user"]
-
-    @admin.display(description="Messages")
-    def message_count(self, obj):
-        return len(obj.messages)
