@@ -3,6 +3,11 @@ URL configuration for projects app.
 """
 from django.urls import path
 
+from .api.data_dictionary import (
+    DataDictionaryView,
+    RefreshSchemaView,
+    TableAnnotationsView,
+)
 from .api.views import (
     ProjectDetailView,
     ProjectListCreateView,
@@ -27,4 +32,20 @@ urlpatterns = [
         name="member_detail",
     ),
     path("test-connection/", TestConnectionView.as_view(), name="test_connection"),
+    # Data dictionary endpoints
+    path(
+        "<uuid:project_id>/data-dictionary/",
+        DataDictionaryView.as_view(),
+        name="data_dictionary",
+    ),
+    path(
+        "<uuid:project_id>/refresh-schema/",
+        RefreshSchemaView.as_view(),
+        name="refresh_schema",
+    ),
+    path(
+        "<uuid:project_id>/data-dictionary/tables/<str:table_path>/",
+        TableAnnotationsView.as_view(),
+        name="table_annotations",
+    ),
 ]
