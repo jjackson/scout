@@ -27,6 +27,11 @@ import sqlglot
 from langchain_core.tools import tool
 from sqlglot import exp
 
+from apps.datasources.services.materialized_data import (
+    build_search_path,
+    get_user_materialized_schemas,
+    track_materialized_data_activity,
+)
 from apps.projects.services.db_manager import get_pool_manager
 from apps.projects.services.rate_limiter import RateLimitExceeded, get_rate_limiter
 
@@ -156,7 +161,8 @@ class SQLValidator:
     4. Only allowed tables/schemas are accessed
 
     Attributes:
-        schema: The database schema to enforce (e.g., "public")
+        schema: The primary database schema to enforce (e.g., "public")
+        allowed_schemas: Additional schemas the user can access (e.g., materialized data)
         allowed_tables: Tables that can be queried (empty = all tables allowed)
         excluded_tables: Tables that cannot be queried
         max_limit: Maximum number of rows to return
@@ -164,6 +170,7 @@ class SQLValidator:
     """
 
     schema: str = "public"
+    allowed_schemas: list[str] = field(default_factory=list)
     allowed_tables: list[str] = field(default_factory=list)
     excluded_tables: list[str] = field(default_factory=list)
     max_limit: int = 500
@@ -308,13 +315,18 @@ class SQLValidator:
                     )
 
             # Validate schema if specified in the query
-            if table_schema and table_schema.lower() not in ("public", self.schema.lower()):
-                raise SQLValidationError(
-                    f"Access to schema '{table_schema}' is not permitted. "
-                    f"Only schema '{self.schema}' is accessible.",
-                    sql=sql,
-                    error_type="schema_not_allowed",
-                )
+            if table_schema:
+                # Build list of allowed schemas
+                all_allowed_schemas = {"public", self.schema.lower()}
+                all_allowed_schemas.update(s.lower() for s in self.allowed_schemas)
+
+                if table_schema.lower() not in all_allowed_schemas:
+                    raise SQLValidationError(
+                        f"Access to schema '{table_schema}' is not permitted. "
+                        f"Allowed schemas: {', '.join(sorted(all_allowed_schemas))}",
+                        sql=sql,
+                        error_type="schema_not_allowed",
+                    )
 
     def _extract_tables(self, statement: exp.Expression) -> list[dict[str, str]]:
         """
@@ -473,12 +485,14 @@ def create_sql_tool(project: Project, user: User | None = None):
     Factory function to create a SQL execution tool for a specific project.
 
     The returned tool validates and executes SQL queries against the project's
-    database with appropriate security restrictions.
+    database with appropriate security restrictions. It also includes access
+    to materialized data schemas from configured data sources.
 
     Args:
         project: The Project model instance containing database connection
                  settings and access restrictions.
-        user: The user executing the queries (for rate limiting).
+        user: The user executing the queries (for rate limiting and
+              materialized data access).
 
     Returns:
         A LangChain tool function that executes SQL queries.
@@ -489,9 +503,18 @@ def create_sql_tool(project: Project, user: User | None = None):
         >>> sql_tool = create_sql_tool(project, user)
         >>> result = sql_tool.invoke({"query": "SELECT * FROM users LIMIT 10"})
     """
-    # Create validator with project settings
+    # Get materialized schemas the user has access to
+    materialized_schemas = []
+    if user:
+        materialized_schemas = get_user_materialized_schemas(project, user)
+
+    # Build search_path for the connection
+    search_path = build_search_path(project, user)
+
+    # Create validator with project settings and materialized schemas
     validator = SQLValidator(
         schema=project.db_schema,
+        allowed_schemas=materialized_schemas,
         allowed_tables=project.allowed_tables or [],
         excluded_tables=project.excluded_tables or [],
         max_limit=project.max_rows_per_query,
@@ -579,6 +602,10 @@ def create_sql_tool(project: Project, user: User | None = None):
                 # Create cursor and execute
                 cursor = conn.cursor()
                 try:
+                    # Set search_path to include materialized schemas
+                    if search_path:
+                        cursor.execute(f"SET search_path TO {search_path}")
+
                     cursor.execute(result.sql_executed)
 
                     # Fetch results
@@ -599,6 +626,10 @@ def create_sql_tool(project: Project, user: User | None = None):
 
             # Record successful query for rate limiting
             get_rate_limiter().record_query(user, project)
+
+            # Track activity for materialized data cleanup scheduling
+            if user and materialized_schemas:
+                track_materialized_data_activity(project, user)
 
             logger.info(
                 "SQL query executed for project %s: %d rows returned",

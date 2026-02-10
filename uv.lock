@@ -1881,6 +1881,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest-django" },
     { name = "zensical" },
 ]
 
@@ -1919,7 +1920,10 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "zensical", specifier = ">=0.0.21" }]
+dev = [
+    { name = "pytest-django", specifier = ">=4.11.1" },
+    { name = "zensical", specifier = ">=0.0.21" },
+]
 
 [[package]]
 name = "simplejson"

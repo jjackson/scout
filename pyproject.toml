@@ -82,5 +82,6 @@ addopts = "-v --tb=short"
 
 [dependency-groups]
 dev = [
+    "pytest-django>=4.11.1",
     "zensical>=0.0.21",
 ]
