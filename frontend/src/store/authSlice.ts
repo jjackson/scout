@@ -44,6 +44,8 @@ export const createAuthSlice: StateCreator<AuthSlice, [], [], AuthSlice> = (set)
     login: async (email: string, password: string) => {
       set({ authStatus: "loading", authError: null })
       try {
+        // Refresh CSRF cookie before login to avoid stale token (e.g. from admin session)
+        await api.get("/api/auth/csrf/")
         const user = await api.post<User>("/api/auth/login/", { email, password })
         set({ user, authStatus: "authenticated", authError: null })
       } catch (e) {
