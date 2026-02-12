@@ -245,6 +245,20 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             },
 
+            // Strip ES module syntax since all libraries are provided as globals
+            stripModuleSyntax(code) {
+                return code
+                    // Remove: import X from 'module', import { X } from 'module', import 'module'
+                    .replace(/^\\s*import\\s+(?:[\\s\\S]*?)from\\s+['"][^'"]*['"]\\s*;?\\s*$/gm, '')
+                    .replace(/^\\s*import\\s+['"][^'"]*['"]\\s*;?\\s*$/gm, '')
+                    // export default function/class/const → just the declaration
+                    .replace(/^(\\s*)export\\s+default\\s+(function|class|const|let|var)\\b/gm, '$1$2')
+                    // export default Expression → const _default = Expression
+                    .replace(/^(\\s*)export\\s+default\\s+/gm, '$1const _default_export = ')
+                    // export function/class/const → just the declaration
+                    .replace(/^(\\s*)export\\s+(function|class|const|let|var)\\b/gm, '$1$2');
+            },
+
             renderReact(artifact) {
                 const { code, data } = artifact;
 
@@ -253,8 +267,9 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
                 const reactRoot = document.getElementById('react-root');
 
                 try {
-                    // Transform JSX to JavaScript using Babel
-                    const transformed = Babel.transform(code, {
+                    // Strip imports/exports then transform JSX using Babel
+                    const stripped = this.stripModuleSyntax(code);
+                    const transformed = Babel.transform(stripped, {
                         presets: ['react'],
                         filename: 'artifact.jsx'
                     }).code;
@@ -281,13 +296,16 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
 
                         ${transformed}
 
-                        // Try to find the default export or a component named App/Component
-                        const Component = typeof exports !== 'undefined' ? exports.default :
-                                         typeof App !== 'undefined' ? App :
-                                         typeof Component !== 'undefined' ? Component :
-                                         typeof Chart !== 'undefined' ? Chart :
-                                         typeof Visualization !== 'undefined' ? Visualization : null;
-                        return Component;
+                        // Try to find the component: default export, or named App/Component/Chart/etc.
+                        const _Component = typeof _default_export !== 'undefined' ? _default_export :
+                                          typeof exports !== 'undefined' ? exports.default :
+                                          typeof App !== 'undefined' ? App :
+                                          typeof Chart !== 'undefined' ? Chart :
+                                          typeof Visualization !== 'undefined' ? Visualization :
+                                          typeof Dashboard !== 'undefined' ? Dashboard :
+                                          typeof Report !== 'undefined' ? Report :
+                                          typeof ReportCard !== 'undefined' ? ReportCard : null;
+                        return _Component;
                         `
                     );
 
