@@ -2,8 +2,8 @@ import type { UIMessage } from "ai"
 import { isToolUIPart, getToolName } from "ai"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ArtifactViewer } from "@/components/ArtifactViewer/ArtifactViewer"
-import { Bot, User, Wrench } from "lucide-react"
+import { useAppStore } from "@/store/store"
+import { Bot, User, Wrench, FileBarChart } from "lucide-react"
 
 interface ChatMessageProps {
   message: UIMessage
@@ -39,6 +39,8 @@ function extractArtifactId(part: any): string | null {
 
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user"
+  const activeArtifactId = useAppStore((s) => s.activeArtifactId)
+  const openArtifact = useAppStore((s) => s.uiActions.openArtifact)
 
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : ""}`}>
@@ -75,7 +77,21 @@ export function ChatMessage({ message }: ChatMessageProps) {
             if (isArtifactToolPart(part)) {
               const artifactId = extractArtifactId(part)
               if (artifactId && part.state === "output-available") {
-                return <ArtifactViewer key={i} artifactId={artifactId} />
+                const isActive = activeArtifactId === artifactId
+                return (
+                  <button
+                    key={i}
+                    onClick={() => openArtifact(artifactId)}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm my-1 transition-colors hover:bg-muted ${
+                      isActive
+                        ? "border-primary bg-primary/5"
+                        : "border-border"
+                    }`}
+                  >
+                    <FileBarChart className="h-4 w-4 text-primary" />
+                    <span>View Artifact</span>
+                  </button>
+                )
               }
             }
 
