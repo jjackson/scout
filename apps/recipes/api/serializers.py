@@ -97,8 +97,7 @@ class RecipeUpdateSerializer(serializers.ModelSerializer):
 class RunRecipeSerializer(serializers.Serializer):
     """Serializer for running a recipe."""
 
-    variables = serializers.DictField(
-        child=serializers.CharField(allow_blank=True),
+    variable_values = serializers.DictField(
         required=False,
         default=dict,
     )

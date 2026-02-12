@@ -28,11 +28,23 @@ export interface Recipe {
   updated_at: string
 }
 
+export interface StepResult {
+  step_order: number
+  prompt: string
+  response: string
+  tools_used: string[]
+  artifacts_created: string[]
+  success: boolean
+  error: string | null
+  started_at: string
+  completed_at: string | null
+}
+
 export interface RecipeRun {
   id: string
   status: "pending" | "running" | "completed" | "failed"
   variable_values: Record<string, string>
-  step_results: unknown[]
+  step_results: StepResult[]
   started_at: string | null
   completed_at: string | null
   created_at: string

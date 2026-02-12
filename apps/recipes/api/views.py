@@ -7,14 +7,14 @@ and viewing run history.
 import logging
 
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.projects.api.permissions import ProjectPermissionMixin
-from apps.recipes.models import Recipe, RecipeRun, RecipeRunStatus
+from apps.recipes.models import Recipe, RecipeRun
+from apps.recipes.services.runner import RecipeRunner, RecipeRunnerError, VariableValidationError
 
 from .serializers import (
     RecipeDetailSerializer,
@@ -140,9 +140,8 @@ class RecipeRunView(RecipePermissionMixin, APIView):
     Run a recipe with provided variable values.
 
     POST /api/projects/{project_id}/recipes/{recipe_id}/run/
-        Executes the recipe with provided variables.
-        Creates a RecipeRun record with status "pending".
-        Actual execution would be handled asynchronously by the agent system.
+        Executes the recipe with provided variables via RecipeRunner.
+        Returns the completed (or failed) RecipeRun record.
         Requires project membership.
     """
 
@@ -162,27 +161,26 @@ class RecipeRunView(RecipePermissionMixin, APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        variables = serializer.validated_data.get("variables", {})
+        variables = serializer.validated_data.get("variable_values", {})
 
-        # Validate variables against recipe definition
-        validation_errors = recipe.validate_variable_values(variables)
-        if validation_errors:
+        try:
+            runner = RecipeRunner(
+                recipe=recipe,
+                variable_values=variables,
+                user=request.user,
+            )
+            run = runner.execute()
+        except VariableValidationError as e:
             return Response(
-                {"error": "Variable validation failed", "details": validation_errors},
+                {"error": "Variable validation failed", "details": e.errors},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        # Create a pending run record
-        run = RecipeRun.objects.create(
-            recipe=recipe,
-            status=RecipeRunStatus.PENDING,
-            variable_values=variables,
-            run_by=request.user,
-            started_at=timezone.now(),
-        )
-
-        # TODO: Trigger async execution via the agent system
-        # For now, we just return the pending run record
+        except RecipeRunnerError as e:
+            logger.exception("Recipe execution error for %s: %s", recipe.name, e)
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         serializer = RecipeRunSerializer(run)
         return Response(serializer.data, status=status.HTTP_201_CREATED)

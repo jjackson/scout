@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react"
-import { Loader2, Play, CheckCircle, XCircle, Clock } from "lucide-react"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+import { Loader2, Play, CheckCircle, XCircle, Clock, AlertCircle } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -19,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import type { Recipe, RecipeVariable, RecipeRun } from "@/store/recipeSlice"
+import type { Recipe, RecipeVariable, RecipeRun, StepResult } from "@/store/recipeSlice"
 
 interface RecipeRunnerProps {
   open: boolean
@@ -29,7 +31,7 @@ interface RecipeRunnerProps {
 }
 
 function getDefaultValue(variable: RecipeVariable): string {
-  if (variable.default) return variable.default
+  if (variable.default != null) return String(variable.default)
   switch (variable.type) {
     case "boolean":
       return "false"
@@ -119,7 +121,7 @@ export function RecipeRunner({ open, onOpenChange, recipe, onRun }: RecipeRunner
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className={result ? "max-w-3xl max-h-[80vh] overflow-y-auto" : "max-w-lg"}>
         <DialogHeader>
           <DialogTitle>Run Recipe: {recipe.name}</DialogTitle>
           <DialogDescription>
@@ -153,18 +155,35 @@ export function RecipeRunner({ open, onOpenChange, recipe, onRun }: RecipeRunner
               </div>
             </div>
             {result.step_results && result.step_results.length > 0 && (
-              <div className="mt-3 pt-3 border-t">
-                <p className="text-sm font-medium mb-2">Results:</p>
-                <div className="space-y-2">
-                  {result.step_results.map((stepResult, index) => (
-                    <div key={index} className="text-sm bg-muted/50 p-2 rounded">
-                      <span className="font-medium">Step {index + 1}:</span>{" "}
-                      {typeof stepResult === "string"
-                        ? stepResult
-                        : JSON.stringify(stepResult, null, 2)}
+              <div className="mt-3 pt-3 border-t space-y-3">
+                {result.step_results.map((step: StepResult, index: number) => (
+                  <div key={index} className="rounded border bg-muted/30">
+                    <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/50">
+                      {step.success ? (
+                        <CheckCircle className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                      ) : (
+                        <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                      )}
+                      <span className="text-sm font-medium">Step {step.step_order}</span>
+                      {step.tools_used.length > 0 && (
+                        <div className="flex gap-1 ml-auto">
+                          {step.tools_used.map((tool) => (
+                            <Badge key={tool} variant="secondary" className="text-xs">
+                              {tool}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                </div>
+                    <div className="p-3 text-sm prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-table:my-2 prose-pre:my-1 overflow-x-auto">
+                      {step.error ? (
+                        <p className="text-destructive">{step.error}</p>
+                      ) : (
+                        <Markdown remarkPlugins={[remarkGfm]}>{step.response}</Markdown>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
