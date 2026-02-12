@@ -7,6 +7,8 @@ import { ChatMessage } from "@/components/ChatMessage/ChatMessage"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Send, Square } from "lucide-react"
+import { SLASH_COMMANDS } from "./slashCommands"
+import { SlashCommandMenu } from "./SlashCommandMenu"
 
 function threadStorageKey(projectId: string) {
   return `scout:thread:${projectId}`
@@ -19,6 +21,7 @@ export function ChatPanel() {
   const fetchThreads = useAppStore((s) => s.uiActions.fetchThreads)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [input, setInput] = useState("")
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0)
   const prevStatusRef = useRef<string>("")
 
   // Use a ref so the transport body closure always reads fresh values,
@@ -41,6 +44,19 @@ export function ChatPanel() {
   })
 
   const isStreaming = status === "streaming" || status === "submitted"
+
+  // Slash command menu state
+  const showSlashMenu =
+    !isStreaming && input.startsWith("/") && !input.slice(1).includes(" ")
+  const slashQuery = showSlashMenu ? input.slice(1) : ""
+  const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
+    cmd.name.startsWith(slashQuery),
+  )
+
+  function selectSlashCommand(cmd: typeof SLASH_COMMANDS[number]) {
+    setInput(`/${cmd.name} `)
+    setSlashMenuIndex(0)
+  }
 
   // Persist threadId to localStorage when it changes
   useEffect(() => {
@@ -103,8 +119,36 @@ export function ChatPanel() {
     e.preventDefault()
     const text = input.trim()
     if (!text || isStreaming) return
+
+    if (text.startsWith("/")) {
+      const spaceIdx = text.indexOf(" ")
+      const cmdName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx)
+      const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim()
+      const cmd = SLASH_COMMANDS.find((c) => c.name === cmdName)
+      if (cmd) {
+        setInput("")
+        sendMessage({ text: cmd.buildPrompt(args) })
+        return
+      }
+    }
+
     setInput("")
     sendMessage({ text })
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!showSlashMenu || filteredCommands.length === 0) return
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setSlashMenuIndex((i) => (i + 1) % filteredCommands.length)
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setSlashMenuIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length)
+    } else if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault()
+      selectSlashCommand(filteredCommands[slashMenuIndex])
+    }
   }
 
   if (!activeProjectId) {
@@ -136,10 +180,21 @@ export function ChatPanel() {
 
       {/* Input area */}
       <div className="border-t p-4">
-        <form onSubmit={handleSubmit} className="flex gap-2">
+        <form onSubmit={handleSubmit} className="relative flex gap-2">
+          <SlashCommandMenu
+            query={slashQuery}
+            onSelect={selectSlashCommand}
+            visible={showSlashMenu}
+            selectedIndex={slashMenuIndex}
+          />
           <Input
+            data-testid="chat-input"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              setSlashMenuIndex(0)
+            }}
+            onKeyDown={handleKeyDown}
             placeholder="Ask about your data..."
             disabled={isStreaming}
             className="flex-1"
