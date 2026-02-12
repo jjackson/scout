@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { ArrowLeft, Save, Play, Loader2, GripVertical, Clock, CheckCircle, XCircle, AlertCircle, Copy, Check, Link, Users, Globe } from "lucide-react"
+import { ArrowLeft, Save, Play, Loader2, GripVertical, Clock, CheckCircle, XCircle, AlertCircle, Copy, Check, Link, Users, Globe, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -24,6 +24,7 @@ interface RecipeDetailProps {
     runId: string,
     data: { is_shared?: boolean; is_public?: boolean },
   ) => Promise<void>
+  onViewRun: (runId: string) => void
 }
 
 const variableTypeBadgeStyles: Record<string, string> = {
@@ -91,7 +92,7 @@ function getPublicUrl(path: string, token: string): string {
   return `${window.location.origin}${path}${token}/`
 }
 
-export function RecipeDetail({ recipe, runs, onBack, onSave, onRun, onUpdateRun }: RecipeDetailProps) {
+export function RecipeDetail({ recipe, runs, onBack, onSave, onRun, onUpdateRun, onViewRun }: RecipeDetailProps) {
   const [name, setName] = useState(recipe.name)
   const [description, setDescription] = useState(recipe.description)
   const [steps, setSteps] = useState<RecipeStep[]>(recipe.steps || [])
@@ -377,7 +378,12 @@ export function RecipeDetail({ recipe, runs, onBack, onSave, onRun, onUpdateRun 
                         className="rounded-lg border p-3 space-y-2"
                         data-testid={`recipe-run-${run.id}`}
                       >
-                        <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between text-left hover:bg-muted/50 -m-1 p-1 rounded transition-colors"
+                          onClick={() => onViewRun(run.id)}
+                          data-testid={`recipe-run-view-${run.id}`}
+                        >
                           <div className="flex items-center gap-3">
                             {getStatusIcon(run.status)}
                             <div>
@@ -391,25 +397,28 @@ export function RecipeDetail({ recipe, runs, onBack, onSave, onRun, onUpdateRun 
                               </p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            {run.variable_values && Object.keys(run.variable_values).length > 0 && (
-                              <div className="flex flex-wrap gap-1 justify-end">
-                                {Object.entries(run.variable_values)
-                                  .slice(0, 3)
-                                  .map(([key, value]) => (
-                                    <Badge key={key} variant="outline" className="text-xs">
-                                      {key}: {String(value).slice(0, 20)}
-                                    </Badge>
-                                  ))}
-                              </div>
-                            )}
-                            {run.completed_at && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Completed: {formatDateTime(run.completed_at)}
-                              </p>
-                            )}
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              {run.variable_values && Object.keys(run.variable_values).length > 0 && (
+                                <div className="flex flex-wrap gap-1 justify-end">
+                                  {Object.entries(run.variable_values)
+                                    .slice(0, 3)
+                                    .map(([key, value]) => (
+                                      <Badge key={key} variant="outline" className="text-xs">
+                                        {key}: {String(value).slice(0, 20)}
+                                      </Badge>
+                                    ))}
+                                </div>
+                              )}
+                              {run.completed_at && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Completed: {formatDateTime(run.completed_at)}
+                                </p>
+                              )}
+                            </div>
+                            <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
                           </div>
-                        </div>
+                        </button>
 
                         {/* Run sharing controls */}
                         <div className="flex items-center gap-4 border-t pt-2">

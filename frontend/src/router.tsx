@@ -22,6 +22,7 @@ export const router = createBrowserRouter([
       { path: "knowledge/:id", element: <KnowledgePage /> },
       { path: "recipes", element: <RecipesPage /> },
       { path: "recipes/:id", element: <RecipesPage /> },
+      { path: "recipes/:id/runs/:runId", element: <RecipesPage /> },
       { path: "data-dictionary", element: <DataDictionaryPage /> },
       { path: "datasources", element: <DataSourcesPage /> },
       { path: "datasources/connect", element: <DataSourcesPage /> },

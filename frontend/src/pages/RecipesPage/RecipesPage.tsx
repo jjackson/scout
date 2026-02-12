@@ -14,10 +14,11 @@ import {
 import { RecipesList } from "./RecipesList"
 import { RecipeDetail } from "./RecipeDetail"
 import { RecipeRunner } from "./RecipeRunner"
+import { RecipeRunDetail } from "./RecipeRunDetail"
 import type { Recipe } from "@/store/recipeSlice"
 
 export function RecipesPage() {
-  const { id } = useParams<{ id: string }>()
+  const { id, runId } = useParams<{ id: string; runId: string }>()
   const navigate = useNavigate()
 
   const activeProjectId = useAppStore((s) => s.activeProjectId)
@@ -88,6 +89,17 @@ export function RecipesPage() {
     }
   }, [currentRecipe])
 
+  const handleBackFromRun = useCallback(() => {
+    navigate(`/recipes/${id}`)
+  }, [navigate, id])
+
+  const handleViewRun = useCallback(
+    (runId: string) => {
+      navigate(`/recipes/${id}/runs/${runId}`)
+    },
+    [navigate, id],
+  )
+
   const handleDelete = useCallback((recipe: Recipe) => {
     setDeleteDialogRecipe(recipe)
   }, [])
@@ -140,6 +152,23 @@ export function RecipesPage() {
     )
   }
 
+  // Show run detail view if we have both recipe ID and run ID
+  if (id && runId && currentRecipe) {
+    const run = recipeRuns.find((r) => r.id === runId)
+    if (run) {
+      return (
+        <div className="container mx-auto py-8">
+          <RecipeRunDetail
+            recipe={currentRecipe}
+            run={run}
+            onBack={handleBackFromRun}
+            onUpdateRun={handleUpdateRun}
+          />
+        </div>
+      )
+    }
+  }
+
   // Show detail view if we have an ID
   if (id && currentRecipe) {
     return (
@@ -151,6 +180,7 @@ export function RecipesPage() {
           onSave={handleSave}
           onRun={handleRunFromDetail}
           onUpdateRun={handleUpdateRun}
+          onViewRun={handleViewRun}
         />
 
         <RecipeRunner
