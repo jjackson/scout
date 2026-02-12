@@ -45,6 +45,10 @@ If a query fails (for example, due to a wrong column name), the agent automatica
 
 Conversations are persisted using a PostgreSQL checkpointer. You can continue a conversation where you left off -- the agent remembers the context from earlier messages in the same thread.
 
+## Slash commands
+
+Type `/` in the chat input to see available commands. For example, `/save-recipe` saves the current conversation as a reusable recipe. See [Asking questions](../guide/asking-questions.md#slash-commands) for the full list.
+
 ## Next steps
 
 - [Asking questions](../guide/asking-questions.md) -- tips for getting better results

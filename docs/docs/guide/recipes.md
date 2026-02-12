@@ -47,9 +47,21 @@ Steps also have an optional `expected_tool` field (e.g., `execute_sql`) that ind
 
 ## Creating a recipe
 
-The agent can create recipes during a conversation when you ask it to save a workflow. The `save_as_recipe` tool handles recipe creation, validating variables and steps.
+The easiest way to create a recipe is with the `/save-recipe` slash command. After an analysis conversation, type:
 
-You can also create recipes via the Django admin.
+```
+/save-recipe
+```
+
+The agent will review the conversation, extract the key steps, identify values that should become variables, and save it as a recipe. You can also add instructions to guide the extraction:
+
+```
+/save-recipe focus on the monthly revenue breakdown, make the date range a variable
+```
+
+Alternatively, you can ask the agent in plain language to save a recipe -- it has access to the `save_as_recipe` tool.
+
+Recipes can also be created via the Django admin.
 
 ## Running a recipe
 

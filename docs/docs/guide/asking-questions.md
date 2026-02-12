@@ -48,6 +48,16 @@ The agent has access to:
 
 The more knowledge you add to a project, the better the agent's answers become.
 
+## Slash commands
+
+Type `/` at the start of the chat input to see available slash commands. An autocomplete menu appears as you type -- use arrow keys to navigate and Tab or Enter to select.
+
+| Command | Description |
+|---------|-------------|
+| `/save-recipe` | Save the current conversation as a reusable recipe. Optionally add instructions after the command, e.g. `/save-recipe make the date range a variable`. |
+
+After selecting a command, press Enter to execute it. The command is translated into a prompt for the agent behind the scenes.
+
 ## Limitations
 
 - The agent can only run **SELECT** queries. It cannot insert, update, or delete data.
