@@ -15,12 +15,15 @@
 11. [ ] CSV import from data_buddy_import.py - needs human input on UX design
     - CLI tool exists at data_buddy_import.py with pandas+sqlalchemy
     - Need to decide: file upload UI? Which DB/schema? Table naming? Column type overrides?
-12. [ ] Allow sharing of chat history (public / team) including artifacts
-    - Thread model (apps/chat/models.py) needs is_shared/is_public/share_token fields
-    - Chat messages are in LangGraph PostgreSQL checkpointer, not Django models
-    - Would need to read from checkpointer for shared view - substantial feature
+12. [x] Allow sharing of chat history (public / team) including artifacts
+    - Added is_shared/is_public/share_token to Thread model with migration
+    - Share button in ChatPanel with team + public toggles and copy link
+    - Public view at /shared/threads/<token>/ reads from LangGraph checkpointer
+    - Public endpoint returns thread metadata, messages (UIMessage format), and artifacts
+    - PublicThreadPage renders messages read-only with artifact preview sidebar
 13. [ ] (human) Can we make recipe results into a continuable chat session?
 
 ## Notes
 - Items tagged (human) are skipped until human review
-- Items 11-13 are larger features requiring design decisions
+- Item 11 needs human UX design decisions
+- Item 13 is tagged (human)
