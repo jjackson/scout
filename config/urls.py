@@ -6,6 +6,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.chat.views import public_thread_view
 from apps.projects.views import health_check
 from apps.recipes.api.views import PublicRecipeRunView
 
@@ -28,6 +29,11 @@ urlpatterns = [
         "api/recipes/runs/shared/<str:share_token>/",
         PublicRecipeRunView.as_view(),
         name="public-recipe-run",
+    ),
+    path(
+        "api/chat/threads/shared/<str:share_token>/",
+        public_thread_view,
+        name="public-thread",
     ),
 ]
 

@@ -211,6 +211,52 @@ def _get_thread(thread_id, user):
 
 
 @sync_to_async
+def _get_public_thread(share_token):
+    """Load a public thread by share token."""
+    try:
+        return Thread.objects.select_related("project", "user").get(
+            share_token=share_token, is_public=True
+        )
+    except Thread.DoesNotExist:
+        return None
+
+
+@sync_to_async
+def _update_thread_sharing(thread, is_shared=None, is_public=None):
+    """Update sharing settings on a thread."""
+    if is_shared is not None:
+        thread.is_shared = is_shared
+    if is_public is not None:
+        thread.is_public = is_public
+    thread.save()
+    return {
+        "id": str(thread.id),
+        "is_shared": thread.is_shared,
+        "is_public": thread.is_public,
+        "share_token": thread.share_token,
+    }
+
+
+@sync_to_async
+def _get_thread_artifacts(thread_id):
+    """Load artifacts associated with a thread."""
+    from apps.artifacts.models import Artifact
+
+    qs = Artifact.objects.filter(conversation_id=str(thread_id)).order_by("created_at")
+    return [
+        {
+            "id": str(a.id),
+            "title": a.title,
+            "artifact_type": a.artifact_type,
+            "code": a.code,
+            "data": a.data,
+            "version": a.version,
+        }
+        for a in qs
+    ]
+
+
+@sync_to_async
 def _list_threads(project_id, user):
     """Return recent threads for a project/user."""
     qs = Thread.objects.filter(
@@ -222,6 +268,9 @@ def _list_threads(project_id, user):
             "title": t.title,
             "created_at": t.created_at.isoformat(),
             "updated_at": t.updated_at.isoformat(),
+            "is_shared": t.is_shared,
+            "is_public": t.is_public,
+            "share_token": t.share_token,
         }
         for t in qs
     ]
@@ -464,3 +513,87 @@ async def thread_messages_view(request, thread_id):
     lc_messages = (checkpoint.get("channel_values") or {}).get("messages", [])
     ui_messages = _langchain_messages_to_ui(lc_messages)
     return JsonResponse(ui_messages, safe=False)
+
+
+# ---------------------------------------------------------------------------
+# Thread sharing endpoints
+# ---------------------------------------------------------------------------
+
+async def thread_share_view(request, thread_id):
+    """
+    GET  /api/chat/threads/<thread_id>/share/  — get sharing settings
+    PATCH /api/chat/threads/<thread_id>/share/ — update sharing settings
+    """
+    user = await _get_user_if_authenticated(request)
+    if user is None:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    thread = await _get_thread(thread_id, user)
+    if thread is None:
+        return JsonResponse({"error": "Thread not found"}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": str(thread.id),
+            "is_shared": thread.is_shared,
+            "is_public": thread.is_public,
+            "share_token": thread.share_token,
+        })
+
+    if request.method == "PATCH":
+        try:
+            body = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        result = await _update_thread_sharing(
+            thread,
+            is_shared=body.get("is_shared"),
+            is_public=body.get("is_public"),
+        )
+        return JsonResponse(result)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+async def public_thread_view(request, share_token):
+    """
+    GET /api/chat/threads/shared/<share_token>/
+
+    Public read-only view of a shared thread's messages and artifacts.
+    No authentication required.
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    thread = await _get_public_thread(share_token)
+    if thread is None:
+        return JsonResponse({"error": "Thread not found"}, status=404)
+
+    # Load messages from checkpointer
+    try:
+        checkpointer = await _ensure_checkpointer()
+        config = {"configurable": {"thread_id": str(thread.id)}}
+        checkpoint_tuple = await checkpointer.aget_tuple(config)
+    except Exception:
+        logger.warning("Failed to load checkpoint for shared thread %s", thread.id, exc_info=True)
+        checkpoint_tuple = None
+
+    messages = []
+    if checkpoint_tuple is not None:
+        checkpoint = checkpoint_tuple.checkpoint
+        lc_messages = (checkpoint.get("channel_values") or {}).get("messages", [])
+        messages = _langchain_messages_to_ui(lc_messages)
+
+    # Load associated artifacts
+    artifacts = await _get_thread_artifacts(thread.id)
+
+    return JsonResponse({
+        "thread": {
+            "id": str(thread.id),
+            "title": thread.title,
+            "created_at": thread.created_at.isoformat(),
+        },
+        "messages": messages,
+        "artifacts": artifacts,
+    })

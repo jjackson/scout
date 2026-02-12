@@ -5,17 +5,19 @@ import { LoginForm } from "@/components/LoginForm/LoginForm"
 import { Skeleton } from "@/components/ui/skeleton"
 import { router } from "@/router"
 import { PublicRecipeRunPage } from "@/pages/PublicRecipeRunPage"
+import { PublicThreadPage } from "@/pages/PublicThreadPage"
 
 function getPublicPageComponent(): React.ReactNode | null {
   const path = window.location.pathname
   if (/^\/shared\/runs\/[^/]+\/?$/.test(path)) return <PublicRecipeRunPage />
+  if (/^\/shared\/threads\/[^/]+\/?$/.test(path)) return <PublicThreadPage />
   return null
 }
 
 export default function App() {
   const authStatus = useAppStore((s) => s.authStatus)
   const fetchMe = useAppStore((s) => s.authActions.fetchMe)
-  const isPublicPage = /^\/shared\/runs\/[^/]+\/?$/.test(window.location.pathname)
+  const isPublicPage = /^\/shared\/(runs|threads)\/[^/]+\/?$/.test(window.location.pathname)
 
   useEffect(() => {
     if (!isPublicPage) {
