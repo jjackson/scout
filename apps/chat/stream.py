@@ -13,6 +13,9 @@ Chunk types used:
   - {"type":"text-start","id":"<id>"}
   - {"type":"text-delta","id":"<id>","delta":"<text>"}
   - {"type":"text-end","id":"<id>"}
+  - {"type":"reasoning-start","id":"<id>"}
+  - {"type":"reasoning-delta","id":"<id>","delta":"<text>"}
+  - {"type":"reasoning-end","id":"<id>"}
   - {"type":"tool-input-available","toolCallId":"<id>","toolName":"<name>","input":{...}}
   - {"type":"tool-output-available","toolCallId":"<id>","output":{...}}
   - {"type":"finish-step"}
@@ -55,6 +58,8 @@ async def langgraph_to_ui_stream(
     """
     text_id = "text-0"
     text_started = False
+    reasoning_id = "reasoning-0"
+    reasoning_started = False
     tool_calls_processed: set[str] = set()
 
     # Preamble
@@ -70,20 +75,48 @@ async def langgraph_to_ui_stream(
                 if not chunk or not hasattr(chunk, "content") or not chunk.content:
                     continue
 
-                # Extract text from content (string or list of blocks)
+                # Extract text and thinking blocks from content
                 texts: list[str] = []
+                thinking_texts: list[str] = []
+
                 if isinstance(chunk.content, str):
                     texts.append(chunk.content)
                 elif isinstance(chunk.content, list):
                     for block in chunk.content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            t = block.get("text", "")
-                            if t:
-                                texts.append(t)
+                        if isinstance(block, dict):
+                            block_type = block.get("type", "")
+                            if block_type == "text":
+                                t = block.get("text", "")
+                                if t:
+                                    texts.append(t)
+                            elif block_type == "thinking":
+                                t = block.get("thinking", "")
+                                if t:
+                                    thinking_texts.append(t)
                         elif hasattr(block, "text") and block.text:
                             texts.append(block.text)
 
+                # Emit thinking/reasoning blocks
+                for t in thinking_texts:
+                    # Close any open text part before reasoning
+                    if text_started:
+                        yield _sse({"type": "text-end", "id": text_id})
+                        text_started = False
+                        text_id = f"text-{uuid.uuid4().hex[:8]}"
+
+                    if not reasoning_started:
+                        yield _sse({"type": "reasoning-start", "id": reasoning_id})
+                        reasoning_started = True
+                    yield _sse({"type": "reasoning-delta", "id": reasoning_id, "delta": t})
+
+                # Emit text blocks
                 for t in texts:
+                    # Close any open reasoning part before text
+                    if reasoning_started:
+                        yield _sse({"type": "reasoning-end", "id": reasoning_id})
+                        reasoning_started = False
+                        reasoning_id = f"reasoning-{uuid.uuid4().hex[:8]}"
+
                     if not text_started:
                         yield _sse({"type": "text-start", "id": text_id})
                         text_started = True
@@ -96,11 +129,15 @@ async def langgraph_to_ui_stream(
                 if run_id:
                     tool_calls_processed.add(run_id)
 
-                # Close any open text part before tool output
+                # Close any open text or reasoning part before tool output
                 if text_started:
                     yield _sse({"type": "text-end", "id": text_id})
                     text_started = False
                     text_id = f"text-{uuid.uuid4().hex[:8]}"
+                if reasoning_started:
+                    yield _sse({"type": "reasoning-end", "id": reasoning_id})
+                    reasoning_started = False
+                    reasoning_id = f"reasoning-{uuid.uuid4().hex[:8]}"
 
                 tool_output = event.get("data", {}).get("output")
                 if tool_output:
@@ -122,6 +159,8 @@ async def langgraph_to_ui_stream(
 
     except Exception:
         logger.exception("Error during agent streaming")
+        if reasoning_started:
+            yield _sse({"type": "reasoning-end", "id": reasoning_id})
         if not text_started:
             yield _sse({"type": "text-start", "id": text_id})
             text_started = True
@@ -131,7 +170,9 @@ async def langgraph_to_ui_stream(
             "delta": "\n\nAn error occurred while processing your request.",
         })
 
-    # Close any open text part
+    # Close any open parts
+    if reasoning_started:
+        yield _sse({"type": "reasoning-end", "id": reasoning_id})
     if text_started:
         yield _sse({"type": "text-end", "id": text_id})
 
