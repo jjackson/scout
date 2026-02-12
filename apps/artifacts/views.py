@@ -247,16 +247,31 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
 
             // Strip ES module syntax since all libraries are provided as globals
             stripModuleSyntax(code) {
-                return code
+                // Capture the name from 'export default function/class Name'
+                // so we can alias it to _default_export afterwards
+                const namedDefaultMatch = code.match(
+                    /^export\\s+default\\s+(?:function|class)\\s+(\\w+)/m
+                );
+
+                let result = code
                     // Remove: import X from 'module', import { X } from 'module', import 'module'
                     .replace(/^\\s*import\\s+(?:[\\s\\S]*?)from\\s+['"][^'"]*['"]\\s*;?\\s*$/gm, '')
                     .replace(/^\\s*import\\s+['"][^'"]*['"]\\s*;?\\s*$/gm, '')
-                    // export default function/class/const → just the declaration
-                    .replace(/^(\\s*)export\\s+default\\s+(function|class|const|let|var)\\b/gm, '$1$2')
-                    // export default Expression → const _default = Expression
+                    // export default function/class Name → just the declaration
+                    .replace(/^(\\s*)export\\s+default\\s+(function|class)\\b/gm, '$1$2')
+                    // export default const/let/var → just the declaration
+                    .replace(/^(\\s*)export\\s+default\\s+(const|let|var)\\b/gm, '$1$2')
+                    // export default Expression → const _default_export = Expression
                     .replace(/^(\\s*)export\\s+default\\s+/gm, '$1const _default_export = ')
                     // export function/class/const → just the declaration
                     .replace(/^(\\s*)export\\s+(function|class|const|let|var)\\b/gm, '$1$2');
+
+                // Add alias so component discovery can find it by _default_export
+                if (namedDefaultMatch) {
+                    result += '\\nvar _default_export = ' + namedDefaultMatch[1] + ';';
+                }
+
+                return result;
             },
 
             renderReact(artifact) {
