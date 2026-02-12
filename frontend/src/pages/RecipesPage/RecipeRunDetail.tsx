@@ -13,10 +13,12 @@ import {
   Link,
   Users,
   Globe,
+  FileBarChart,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useAppStore } from "@/store/store"
 import type { Recipe, RecipeRun } from "@/store/recipeSlice"
 
 interface RecipeRunDetailProps {
@@ -98,6 +100,8 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export function RecipeRunDetail({ recipe, run, onBack, onUpdateRun }: RecipeRunDetailProps) {
+  const openArtifact = useAppStore((s) => s.uiActions.openArtifact)
+  const activeArtifactId = useAppStore((s) => s.activeArtifactId)
   const variableEntries = run.variable_values
     ? Object.entries(run.variable_values)
     : []
@@ -198,6 +202,25 @@ export function RecipeRunDetail({ recipe, run, onBack, onUpdateRun }: RecipeRunD
                     <Markdown remarkPlugins={[remarkGfm]}>{step.response}</Markdown>
                   )}
                 </div>
+                {step.artifacts_created && step.artifacts_created.length > 0 && (
+                  <div className="flex flex-wrap gap-2 px-3 pb-3 border-t pt-2">
+                    {step.artifacts_created.map((artifactId) => (
+                      <button
+                        key={artifactId}
+                        onClick={() => openArtifact(artifactId)}
+                        className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-muted ${
+                          activeArtifactId === artifactId
+                            ? "border-primary bg-primary/5"
+                            : "border-border"
+                        }`}
+                        data-testid={`run-artifact-${artifactId}`}
+                      >
+                        <FileBarChart className="h-4 w-4 text-primary" />
+                        <span>View Artifact</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>
