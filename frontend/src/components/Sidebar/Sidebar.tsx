@@ -43,13 +43,11 @@ export function Sidebar() {
           Project
         </label>
         <Select
-          value={activeProjectId ?? undefined}
+          value={activeProjectId ?? ""}
           onValueChange={setActiveProject}
         >
           <SelectTrigger className="mt-1 w-full">
-            <SelectValue placeholder="Select project">
-              {activeProject?.name}
-            </SelectValue>
+            <SelectValue placeholder="Select project" />
           </SelectTrigger>
           <SelectContent>
             {projects.map((project) => (
