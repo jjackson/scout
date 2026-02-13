@@ -83,6 +83,171 @@ class DataDictionaryView(ProjectPermissionMixin, APIView):
         return Response(result)
 
 
+async def fetch_schema(project: Project) -> dict:
+    """
+    Fetch schema information from the project's database.
+
+    Returns:
+        dict with 'tables' key containing table and column information.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(
+        host=project.db_host,
+        port=project.db_port,
+        database=project.db_name,
+        user=project.db_user,
+        password=project.db_password,
+    )
+
+    try:
+        schema = project.db_schema
+
+        # Get all tables in the schema
+        tables_rows = await conn.fetch("""
+            SELECT
+                table_schema,
+                table_name,
+                table_type
+            FROM information_schema.tables
+            WHERE table_schema = $1
+              AND table_type IN ('BASE TABLE', 'VIEW')
+            ORDER BY table_name
+        """, schema)
+
+        # Get all columns for tables in the schema
+        columns_rows = await conn.fetch("""
+            SELECT
+                table_schema,
+                table_name,
+                column_name,
+                data_type,
+                is_nullable,
+                column_default,
+                ordinal_position,
+                character_maximum_length,
+                numeric_precision,
+                numeric_scale
+            FROM information_schema.columns
+            WHERE table_schema = $1
+            ORDER BY table_name, ordinal_position
+        """, schema)
+
+        # Get primary key information
+        pk_rows = await conn.fetch("""
+            SELECT
+                tc.table_schema,
+                tc.table_name,
+                kcu.column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            WHERE tc.table_schema = $1
+              AND tc.constraint_type = 'PRIMARY KEY'
+        """, schema)
+
+        # Get foreign key information
+        fk_rows = await conn.fetch("""
+            SELECT
+                tc.table_schema,
+                tc.table_name,
+                kcu.column_name,
+                ccu.table_schema AS foreign_table_schema,
+                ccu.table_name AS foreign_table_name,
+                ccu.column_name AS foreign_column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+                AND ccu.table_schema = tc.table_schema
+            WHERE tc.table_schema = $1
+              AND tc.constraint_type = 'FOREIGN KEY'
+        """, schema)
+
+        # Build primary keys lookup
+        primary_keys = {}
+        for row in pk_rows:
+            table_key = f"{row['table_schema']}.{row['table_name']}"
+            if table_key not in primary_keys:
+                primary_keys[table_key] = []
+            primary_keys[table_key].append(row["column_name"])
+
+        # Build foreign keys lookup
+        foreign_keys = {}
+        for row in fk_rows:
+            table_key = f"{row['table_schema']}.{row['table_name']}"
+            if table_key not in foreign_keys:
+                foreign_keys[table_key] = {}
+            foreign_keys[table_key][row["column_name"]] = {
+                "references_schema": row["foreign_table_schema"],
+                "references_table": row["foreign_table_name"],
+                "references_column": row["foreign_column_name"],
+            }
+
+        # Build columns lookup by table
+        columns_by_table = {}
+        for row in columns_rows:
+            table_key = f"{row['table_schema']}.{row['table_name']}"
+            if table_key not in columns_by_table:
+                columns_by_table[table_key] = []
+
+            column_info = {
+                "name": row["column_name"],
+                "data_type": row["data_type"],
+                "nullable": row["is_nullable"] == "YES",
+                "default": row["column_default"],
+                "ordinal_position": row["ordinal_position"],
+            }
+
+            # Add type details for specific types
+            if row["character_maximum_length"]:
+                column_info["max_length"] = row["character_maximum_length"]
+            if row["numeric_precision"]:
+                column_info["precision"] = row["numeric_precision"]
+            if row["numeric_scale"] is not None:
+                column_info["scale"] = row["numeric_scale"]
+
+            # Check if this column is a primary key
+            pk_columns = primary_keys.get(table_key, [])
+            if row["column_name"] in pk_columns:
+                column_info["primary_key"] = True
+
+            # Check if this column is a foreign key
+            fk_info = foreign_keys.get(table_key, {}).get(row["column_name"])
+            if fk_info:
+                column_info["foreign_key"] = fk_info
+
+            columns_by_table[table_key].append(column_info)
+
+        # Build final tables structure
+        tables = {}
+        for row in tables_rows:
+            table_key = f"{row['table_schema']}.{row['table_name']}"
+            tables[table_key] = {
+                "schema": row["table_schema"],
+                "name": row["table_name"],
+                "type": row["table_type"],
+                "columns": columns_by_table.get(table_key, []),
+                "primary_key": primary_keys.get(table_key, []),
+            }
+
+        return {"tables": tables}
+
+    finally:
+        await conn.close()
+
+
+def refresh_project_schema(project: Project) -> None:
+    """Refresh a project's data dictionary from its database and save."""
+    schema_info = asyncio.run(fetch_schema(project))
+    project.data_dictionary = schema_info
+    project.data_dictionary_generated_at = timezone.now()
+    project.save(update_fields=["data_dictionary", "data_dictionary_generated_at"])
+
+
 class RefreshSchemaView(ProjectPermissionMixin, APIView):
     """
     Refresh the project's data dictionary from the database.
@@ -105,16 +270,13 @@ class RefreshSchemaView(ProjectPermissionMixin, APIView):
             return error_response
 
         try:
-            schema_info = asyncio.run(self._fetch_schema(project))
-
-            # Save to project
-            project.data_dictionary = schema_info
-            project.data_dictionary_generated_at = timezone.now()
-            project.save(update_fields=["data_dictionary", "data_dictionary_generated_at"])
+            refresh_project_schema(project)
 
             return Response({
                 "success": True,
-                "tables_count": len(schema_info.get("tables", {})),
+                "tables_count": len(
+                    (project.data_dictionary or {}).get("tables", {})
+                ),
                 "generated_at": project.data_dictionary_generated_at.isoformat(),
             })
 
@@ -124,162 +286,6 @@ class RefreshSchemaView(ProjectPermissionMixin, APIView):
                 {"error": f"Failed to refresh schema: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-    async def _fetch_schema(self, project: Project) -> dict:
-        """
-        Fetch schema information from the project's database.
-
-        Returns:
-            dict with 'tables' key containing table and column information.
-        """
-        import asyncpg
-
-        conn = await asyncpg.connect(
-            host=project.db_host,
-            port=project.db_port,
-            database=project.db_name,
-            user=project.db_user,
-            password=project.db_password,
-        )
-
-        try:
-            schema = project.db_schema
-
-            # Get all tables in the schema
-            tables_rows = await conn.fetch("""
-                SELECT 
-                    table_schema,
-                    table_name,
-                    table_type
-                FROM information_schema.tables
-                WHERE table_schema = $1
-                  AND table_type IN ('BASE TABLE', 'VIEW')
-                ORDER BY table_name
-            """, schema)
-
-            # Get all columns for tables in the schema
-            columns_rows = await conn.fetch("""
-                SELECT 
-                    table_schema,
-                    table_name,
-                    column_name,
-                    data_type,
-                    is_nullable,
-                    column_default,
-                    ordinal_position,
-                    character_maximum_length,
-                    numeric_precision,
-                    numeric_scale
-                FROM information_schema.columns
-                WHERE table_schema = $1
-                ORDER BY table_name, ordinal_position
-            """, schema)
-
-            # Get primary key information
-            pk_rows = await conn.fetch("""
-                SELECT 
-                    tc.table_schema,
-                    tc.table_name,
-                    kcu.column_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu 
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                WHERE tc.table_schema = $1
-                  AND tc.constraint_type = 'PRIMARY KEY'
-            """, schema)
-
-            # Get foreign key information
-            fk_rows = await conn.fetch("""
-                SELECT 
-                    tc.table_schema,
-                    tc.table_name,
-                    kcu.column_name,
-                    ccu.table_schema AS foreign_table_schema,
-                    ccu.table_name AS foreign_table_name,
-                    ccu.column_name AS foreign_column_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu 
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu 
-                    ON ccu.constraint_name = tc.constraint_name
-                    AND ccu.table_schema = tc.table_schema
-                WHERE tc.table_schema = $1
-                  AND tc.constraint_type = 'FOREIGN KEY'
-            """, schema)
-
-            # Build primary keys lookup
-            primary_keys = {}
-            for row in pk_rows:
-                table_key = f"{row['table_schema']}.{row['table_name']}"
-                if table_key not in primary_keys:
-                    primary_keys[table_key] = []
-                primary_keys[table_key].append(row["column_name"])
-
-            # Build foreign keys lookup
-            foreign_keys = {}
-            for row in fk_rows:
-                table_key = f"{row['table_schema']}.{row['table_name']}"
-                if table_key not in foreign_keys:
-                    foreign_keys[table_key] = {}
-                foreign_keys[table_key][row["column_name"]] = {
-                    "references_schema": row["foreign_table_schema"],
-                    "references_table": row["foreign_table_name"],
-                    "references_column": row["foreign_column_name"],
-                }
-
-            # Build columns lookup by table
-            columns_by_table = {}
-            for row in columns_rows:
-                table_key = f"{row['table_schema']}.{row['table_name']}"
-                if table_key not in columns_by_table:
-                    columns_by_table[table_key] = []
-
-                column_info = {
-                    "name": row["column_name"],
-                    "data_type": row["data_type"],
-                    "nullable": row["is_nullable"] == "YES",
-                    "default": row["column_default"],
-                    "ordinal_position": row["ordinal_position"],
-                }
-
-                # Add type details for specific types
-                if row["character_maximum_length"]:
-                    column_info["max_length"] = row["character_maximum_length"]
-                if row["numeric_precision"]:
-                    column_info["precision"] = row["numeric_precision"]
-                if row["numeric_scale"] is not None:
-                    column_info["scale"] = row["numeric_scale"]
-
-                # Check if this column is a primary key
-                pk_columns = primary_keys.get(table_key, [])
-                if row["column_name"] in pk_columns:
-                    column_info["primary_key"] = True
-
-                # Check if this column is a foreign key
-                fk_info = foreign_keys.get(table_key, {}).get(row["column_name"])
-                if fk_info:
-                    column_info["foreign_key"] = fk_info
-
-                columns_by_table[table_key].append(column_info)
-
-            # Build final tables structure
-            tables = {}
-            for row in tables_rows:
-                table_key = f"{row['table_schema']}.{row['table_name']}"
-                tables[table_key] = {
-                    "schema": row["table_schema"],
-                    "name": row["table_name"],
-                    "type": row["table_type"],
-                    "columns": columns_by_table.get(table_key, []),
-                    "primary_key": primary_keys.get(table_key, []),
-                }
-
-            return {"tables": tables}
-
-        finally:
-            await conn.close()
 
 
 class TableAnnotationsView(ProjectPermissionMixin, APIView):

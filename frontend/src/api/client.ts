@@ -7,12 +7,17 @@ export function getCsrfToken(): string {
   return match ? match[1] : ""
 }
 
-async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(
+  url: string,
+  options: RequestInit & { rawBody?: boolean } = {},
+): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase()
+  const { rawBody, ...fetchOptions } = options
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string> | undefined),
+    // Skip Content-Type for FormData — the browser sets the multipart boundary
+    ...(rawBody ? {} : { "Content-Type": "application/json" }),
+    ...(fetchOptions.headers as Record<string, string> | undefined),
   }
 
   // Attach CSRF token for mutations
@@ -21,7 +26,7 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   }
 
   const res = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers,
     credentials: "include",
   })
@@ -58,4 +63,6 @@ export const api = {
   patch: <T>(url: string, body?: unknown) =>
     request<T>(url, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(url: string) => request<T>(url, { method: "DELETE" }),
+  upload: <T>(url: string, formData: FormData) =>
+    request<T>(url, { method: "POST", body: formData, rawBody: true }),
 }

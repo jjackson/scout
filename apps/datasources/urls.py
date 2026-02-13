@@ -5,6 +5,7 @@ URL configuration for datasources API.
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .csv_import import csv_import_view
 from .views import (
     DatabaseConnectionViewSet,
     DataSourceCredentialViewSet,
@@ -30,4 +31,5 @@ urlpatterns = [
     path("types/", DataSourceTypesView.as_view(), name="datasource-types"),
     path("oauth/start/", OAuthStartView.as_view(), name="oauth-start"),
     path("oauth/callback/", OAuthCallbackView.as_view(), name="oauth-callback"),
+    path("csv-import/", csv_import_view, name="csv-import"),
 ]

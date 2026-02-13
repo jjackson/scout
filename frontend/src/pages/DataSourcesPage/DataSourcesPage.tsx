@@ -1,15 +1,34 @@
-import { useEffect, useState } from "react"
-import { useSearchParams } from "react-router-dom"
-import { CheckCircle, AlertCircle, Database, Cloud, RefreshCw } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Link, useSearchParams } from "react-router-dom"
+import { CheckCircle, AlertCircle, Database, Cloud, RefreshCw, Upload } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { api } from "@/api/client"
+import { useAppStore } from "@/store/store"
 import type {
   DataSourceCredential,
   MaterializedDataset,
   DataSource,
 } from "./types"
+
+interface CsvImportResult {
+  table_name: string
+  row_count: number
+  column_count: number
+  columns: { name: string; dtype: string }[]
+}
+
+function deriveTableName(filename: string): string {
+  return filename
+    .replace(/\.csv$/i, "")
+    .toLowerCase()
+    .replace(/[\s\-\.@]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/^(\d)/, "col_$1")
+}
 
 export function DataSourcesPage() {
   const [searchParams] = useSearchParams()
@@ -18,6 +37,16 @@ export function DataSourcesPage() {
   const [dataSources, setDataSources] = useState<DataSource[]>([])
   const [loading, setLoading] = useState(true)
   const [connectingSource, setConnectingSource] = useState<string | null>(null)
+
+  // CSV import state
+  const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [tableName, setTableName] = useState("")
+  const [uploading, setUploading] = useState(false)
+  const [importResult, setImportResult] = useState<CsvImportResult | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const activeProjectId = useAppStore((s) => s.activeProjectId)
 
   const successMessage = searchParams.get("success") === "true"
   const errorMessage = searchParams.get("error")
@@ -41,6 +70,48 @@ export function DataSourcesPage() {
       console.error("Failed to fetch data sources:", err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null
+    setCsvFile(file)
+    setImportResult(null)
+    setImportError(null)
+    if (file) {
+      setTableName(deriveTableName(file.name))
+    } else {
+      setTableName("")
+    }
+  }
+
+  const handleCsvUpload = async () => {
+    if (!csvFile || !tableName || !activeProjectId) return
+
+    setUploading(true)
+    setImportResult(null)
+    setImportError(null)
+
+    const formData = new FormData()
+    formData.append("file", csvFile)
+    formData.append("project_id", activeProjectId)
+    formData.append("table_name", tableName)
+
+    try {
+      const result = await api.upload<CsvImportResult>(
+        "/api/datasources/csv-import/",
+        formData,
+      )
+      setImportResult(result)
+      setCsvFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed"
+      setImportError(message)
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -120,6 +191,94 @@ export function DataSourcesPage() {
             <span>Error: {errorMessage}</span>
           </div>
         </div>
+      )}
+
+      {/* CSV Import */}
+      {activeProjectId && (
+        <Card className="mb-6" data-testid="csv-import-card">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Upload className="mr-2 h-5 w-5" />
+              Import CSV
+            </CardTitle>
+            <CardDescription>
+              Upload a CSV file to import it as a table in your project's database.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="csv-file">CSV File</Label>
+                  <Input
+                    id="csv-file"
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileSelect}
+                    data-testid="csv-import-file"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="table-name">Table Name</Label>
+                  <Input
+                    id="table-name"
+                    value={tableName}
+                    onChange={(e) => setTableName(e.target.value)}
+                    placeholder="my_table"
+                    data-testid="csv-import-table-name"
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={handleCsvUpload}
+                disabled={!csvFile || !tableName || uploading}
+                data-testid="csv-import-upload"
+              >
+                {uploading ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                {uploading ? "Importing..." : "Upload & Import"}
+              </Button>
+
+              {importError && (
+                <div className="rounded-md bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/20 dark:text-red-400">
+                  <div className="flex items-center">
+                    <AlertCircle className="mr-2 h-4 w-4 shrink-0" />
+                    <span>{importError}</span>
+                  </div>
+                </div>
+              )}
+
+              {importResult && (
+                <div className="rounded-md bg-green-50 p-3 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
+                  <div className="flex items-center mb-2">
+                    <CheckCircle className="mr-2 h-4 w-4 shrink-0" />
+                    <span>
+                      Imported {importResult.row_count.toLocaleString()} rows,{" "}
+                      {importResult.column_count} columns into{" "}
+                      <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">
+                        {importResult.table_name}
+                      </code>
+                      {" — "}
+                      <Link
+                        to="/data-dictionary"
+                        className="underline hover:text-green-900 dark:hover:text-green-300"
+                      >
+                        View in Data Dictionary
+                      </Link>
+                    </span>
+                  </div>
+                  <div className="ml-6 text-xs text-green-700 dark:text-green-500">
+                    {importResult.columns.map((c) => c.name).join(", ")}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
