@@ -5,15 +5,15 @@ Database access layer for the Scout agent, exposed via the Model Context
 Protocol. Runs as a standalone process but uses Django ORM to load project
 configuration and database credentials.
 
+The agent must call set_project with a project_id before using any other
+tools. This sets the session context for all subsequent tool calls.
+
 Usage:
     # stdio transport (for local clients)
-    python -m mcp_server --project-id <uuid>
+    python -m mcp_server
 
     # HTTP transport (for networked clients)
-    python -m mcp_server --project-id <uuid> --transport streamable-http
-
-    # Specify host/port for HTTP
-    python -m mcp_server --project-id <uuid> --transport streamable-http --host 0.0.0.0 --port 9000
+    python -m mcp_server --transport streamable-http
 """
 
 from __future__ import annotations
@@ -32,6 +32,48 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("scout")
 
 
+# --- Session setup ---
+
+
+@mcp.tool()
+async def set_project(project_id: str) -> dict:
+    """Set the active project for this session.
+
+    Must be called before using any other tools. Loads the project's
+    database connection, schema configuration, and query limits.
+    Can be called again to switch projects within the same session.
+
+    Args:
+        project_id: UUID of the Scout project to work with.
+    """
+    from apps.projects.models import Project
+
+    try:
+        project = await Project.objects.select_related("database_connection").aget(
+            id=project_id, is_active=True
+        )
+    except Project.DoesNotExist:
+        return {"error": f"Project '{project_id}' not found or not active"}
+
+    if not project.database_connection.is_active:
+        return {"error": f"Database connection for project '{project.name}' is not active"}
+
+    ctx = ProjectContext.from_project(project)
+    set_project_context(ctx)
+    logger.info(
+        "Session project set to '%s' (schema=%s)",
+        ctx.project_name,
+        ctx.db_schema,
+    )
+    return {
+        "project_id": ctx.project_id,
+        "project_name": ctx.project_name,
+        "schema": ctx.db_schema,
+        "max_rows_per_query": ctx.max_rows_per_query,
+        "max_query_timeout_seconds": ctx.max_query_timeout_seconds,
+    }
+
+
 # --- v1 Tools ---
 
 
@@ -41,6 +83,8 @@ async def list_tables() -> dict:
 
     Returns table names, types (table/view), approximate row counts,
     and descriptions. Respects project-level table allow/exclude lists.
+
+    Requires set_project to be called first.
     """
     from mcp_server.services import metadata
 
@@ -60,6 +104,8 @@ async def describe_table(table_name: str) -> dict:
     Returns columns (name, type, nullable, default), primary keys,
     foreign key relationships, indexes, and semantic descriptions
     if available.
+
+    Requires set_project to be called first.
 
     Args:
         table_name: Name of the table to describe (case-insensitive).
@@ -88,6 +134,8 @@ async def get_metadata() -> dict:
     Returns all tables, columns, relationships, and semantic layer
     information in a single call. Useful for building comprehensive
     understanding of available data.
+
+    Requires set_project to be called first.
     """
     from mcp_server.services import metadata
 
@@ -105,6 +153,8 @@ async def query(sql: str) -> dict:
 
     The query is validated for safety (SELECT only, no dangerous functions),
     row limits are enforced, and execution uses a read-only database role.
+
+    Requires set_project to be called first.
 
     Args:
         sql: A SQL SELECT query to execute.
@@ -139,43 +189,8 @@ def _setup_django() -> None:
     django.setup()
 
 
-def _load_project(project_id: str) -> None:
-    """Load a project from the database and set the global context."""
-    from apps.projects.models import Project
-
-    try:
-        project = Project.objects.select_related("database_connection").get(
-            id=project_id, is_active=True
-        )
-    except Project.DoesNotExist:
-        logger.error("Project %s not found or not active", project_id)
-        sys.exit(1)
-
-    if not project.database_connection.is_active:
-        logger.error(
-            "Database connection '%s' for project '%s' is not active",
-            project.database_connection.name,
-            project.name,
-        )
-        sys.exit(1)
-
-    ctx = ProjectContext.from_project(project)
-    set_project_context(ctx)
-    logger.info(
-        "Loaded project '%s' (schema=%s, tables=%s)",
-        ctx.project_name,
-        ctx.db_schema,
-        f"allow={ctx.allowed_tables}" if ctx.allowed_tables else "all",
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scout MCP Server")
-    parser.add_argument(
-        "--project-id",
-        required=True,
-        help="UUID of the Scout project to serve",
-    )
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http"],
@@ -190,7 +205,6 @@ def main() -> None:
 
     _configure_logging(args.verbose)
     _setup_django()
-    _load_project(args.project_id)
 
     logger.info("Starting Scout MCP server (transport=%s)", args.transport)
 

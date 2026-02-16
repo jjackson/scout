@@ -1,7 +1,8 @@
 """Project context for the MCP server.
 
-Holds the loaded Project instance so tool handlers can access
-project configuration, database connection params, and query limits.
+Holds the active Project so tool handlers can access project configuration,
+database connection params, and query limits. Set per-session via the
+set_project tool.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-# Module-level project context, set during server startup
+# Module-level project context, set per-session via set_project tool
 _project_context: ProjectContext | None = None
 
 
@@ -44,16 +45,21 @@ class ProjectContext:
 
 
 def set_project_context(ctx: ProjectContext) -> None:
-    """Set the global project context. Called once during server startup."""
+    """Set the global project context. Called by the set_project tool."""
     global _project_context
     _project_context = ctx
 
 
 def get_project_context() -> ProjectContext:
-    """Get the global project context. Raises if not initialized."""
+    """Get the global project context. Raises if no project is set."""
     if _project_context is None:
         raise RuntimeError(
-            "Project context not initialized. "
-            "Pass --project-id when starting the MCP server."
+            "No project selected. Call the set_project tool first "
+            "with a valid project_id."
         )
     return _project_context
+
+
+def has_project_context() -> bool:
+    """Check if a project context has been set."""
+    return _project_context is not None
