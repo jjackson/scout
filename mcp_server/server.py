@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("scout")
 
 
-# --- v1 Tool stubs ---
+# --- v1 Tools ---
 
 
 @mcp.tool()
@@ -42,11 +42,14 @@ def list_tables() -> dict:
     Returns table names, types (table/view), approximate row counts,
     and descriptions. Respects project-level table allow/exclude lists.
     """
+    from mcp_server.services import metadata
+
     ctx = get_project_context()
+    tables = metadata.list_tables(ctx.project_id)
     return {
         "project_id": ctx.project_id,
         "schema": ctx.db_schema,
-        "tables": [],  # TODO: Milestone 2
+        "tables": tables,
     }
 
 
@@ -59,14 +62,22 @@ def describe_table(table_name: str) -> dict:
     if available.
 
     Args:
-        table_name: Name of the table to describe.
+        table_name: Name of the table to describe (case-insensitive).
     """
+    from mcp_server.services import metadata
+
     ctx = get_project_context()
+    table = metadata.describe_table(ctx.project_id, table_name)
+    if table is None:
+        suggestions = metadata.suggest_tables(ctx.project_id, table_name)
+        return {
+            "error": f"Table '{table_name}' not found",
+            "suggestions": suggestions,
+        }
     return {
         "project_id": ctx.project_id,
         "schema": ctx.db_schema,
-        "table_name": table_name,
-        "columns": [],  # TODO: Milestone 2
+        **table,
     }
 
 
@@ -78,11 +89,13 @@ def get_metadata() -> dict:
     information in a single call. Useful for building comprehensive
     understanding of available data.
     """
+    from mcp_server.services import metadata
+
     ctx = get_project_context()
+    snapshot = metadata.get_metadata(ctx.project_id)
     return {
         "project_id": ctx.project_id,
-        "schema": ctx.db_schema,
-        "tables": {},  # TODO: Milestone 2
+        **snapshot,
     }
 
 
@@ -121,6 +134,11 @@ def _configure_logging(verbose: bool = False) -> None:
 def _setup_django() -> None:
     """Initialize Django ORM for model access."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+    # FastMCP runs tools in an async event loop. Django's ORM is sync-only and
+    # raises SynchronousOnlyOperation when it detects a running event loop.
+    # This is safe because the MCP server is a standalone process, not a web
+    # server handling concurrent requests.
+    os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
     import django
 
     django.setup()

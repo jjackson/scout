@@ -13,7 +13,7 @@ Usage:
     dictionary = generator.generate()  # Returns dict, also saves to project.data_dictionary
     prompt_text = generator.render_for_prompt()  # Returns formatted string for system prompt
 """
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import psycopg2
@@ -337,14 +337,14 @@ class DataDictionaryGenerator:
 
             dictionary = {
                 "schema": self.schema,
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "tables": tables,
                 "enums": enums,
             }
 
             # Save to project
             self.project.data_dictionary = dictionary
-            self.project.data_dictionary_generated_at = datetime.utcnow()
+            self.project.data_dictionary_generated_at = datetime.now(UTC)
             self.project.save(
                 update_fields=["data_dictionary", "data_dictionary_generated_at"]
             )
