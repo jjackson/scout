@@ -36,7 +36,7 @@ mcp = FastMCP("scout")
 
 
 @mcp.tool()
-def list_tables() -> dict:
+async def list_tables() -> dict:
     """List all tables and views in the project database.
 
     Returns table names, types (table/view), approximate row counts,
@@ -45,7 +45,7 @@ def list_tables() -> dict:
     from mcp_server.services import metadata
 
     ctx = get_project_context()
-    tables = metadata.list_tables(ctx.project_id)
+    tables = await metadata.list_tables(ctx.project_id)
     return {
         "project_id": ctx.project_id,
         "schema": ctx.db_schema,
@@ -54,7 +54,7 @@ def list_tables() -> dict:
 
 
 @mcp.tool()
-def describe_table(table_name: str) -> dict:
+async def describe_table(table_name: str) -> dict:
     """Get detailed metadata for a specific table.
 
     Returns columns (name, type, nullable, default), primary keys,
@@ -67,9 +67,9 @@ def describe_table(table_name: str) -> dict:
     from mcp_server.services import metadata
 
     ctx = get_project_context()
-    table = metadata.describe_table(ctx.project_id, table_name)
+    table = await metadata.describe_table(ctx.project_id, table_name)
     if table is None:
-        suggestions = metadata.suggest_tables(ctx.project_id, table_name)
+        suggestions = await metadata.suggest_tables(ctx.project_id, table_name)
         return {
             "error": f"Table '{table_name}' not found",
             "suggestions": suggestions,
@@ -82,7 +82,7 @@ def describe_table(table_name: str) -> dict:
 
 
 @mcp.tool()
-def get_metadata() -> dict:
+async def get_metadata() -> dict:
     """Get a complete metadata snapshot for the project database.
 
     Returns all tables, columns, relationships, and semantic layer
@@ -92,7 +92,7 @@ def get_metadata() -> dict:
     from mcp_server.services import metadata
 
     ctx = get_project_context()
-    snapshot = metadata.get_metadata(ctx.project_id)
+    snapshot = await metadata.get_metadata(ctx.project_id)
     return {
         "project_id": ctx.project_id,
         **snapshot,
@@ -100,7 +100,7 @@ def get_metadata() -> dict:
 
 
 @mcp.tool()
-def query(sql: str) -> dict:
+async def query(sql: str) -> dict:
     """Execute a read-only SQL query against the project database.
 
     The query is validated for safety (SELECT only, no dangerous functions),
@@ -134,11 +134,6 @@ def _configure_logging(verbose: bool = False) -> None:
 def _setup_django() -> None:
     """Initialize Django ORM for model access."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
-    # FastMCP runs tools in an async event loop. Django's ORM is sync-only and
-    # raises SynchronousOnlyOperation when it detects a running event loop.
-    # This is safe because the MCP server is a standalone process, not a web
-    # server handling concurrent requests.
-    os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
     import django
 
     django.setup()
