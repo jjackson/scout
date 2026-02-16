@@ -1,12 +1,11 @@
 """
 Scout MCP Server.
 
-Exposes Scout project tools (SQL queries, table descriptions, etc.) via the
-Model Context Protocol, allowing external AI agents to interact with Scout
-projects.
+Database access layer for the Scout agent, exposed via the Model Context
+Protocol. This is a standalone service — no Django dependency.
 
 Usage:
-    # stdio transport (for Claude Desktop / local clients)
+    # stdio transport (for local clients)
     python -m mcp_server
 
     # HTTP transport (for networked clients)
@@ -20,25 +19,39 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 
-# Django setup must happen before importing any models
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.base")
-
-import django  # noqa: E402
-
-django.setup()
-
-from mcp.server.fastmcp import FastMCP  # noqa: E402
-
-from mcp_server.tools.describe_table import register_describe_table  # noqa: E402
-from mcp_server.tools.list_projects import register_list_projects  # noqa: E402
-from mcp_server.tools.sql import register_sql_tool  # noqa: E402
+from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("scout")
+
+
+# --- Tools will be registered here as the service is built out ---
+
+
+@mcp.tool()
+def execute_sql(query: str) -> dict:
+    """Execute a read-only SQL query against the project database.
+
+    Args:
+        query: A SQL SELECT query to execute.
+
+    Returns:
+        A dict with columns, rows, row_count, and error (null on success).
+    """
+    raise NotImplementedError
+
+
+@mcp.tool()
+def get_schema() -> dict:
+    """Return the database schema (tables, columns, types, relationships).
+
+    Returns:
+        A dict describing all tables and their columns.
+    """
+    raise NotImplementedError
 
 
 def _configure_logging(verbose: bool = False) -> None:
@@ -48,13 +61,6 @@ def _configure_logging(verbose: bool = False) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,  # never write to stdout with stdio transport
     )
-
-
-def _register_tools() -> None:
-    """Register all MCP tools on the server instance."""
-    register_list_projects(mcp)
-    register_sql_tool(mcp)
-    register_describe_table(mcp)
 
 
 def main() -> None:
@@ -72,7 +78,6 @@ def main() -> None:
     args = parser.parse_args()
 
     _configure_logging(args.verbose)
-    _register_tools()
 
     logger.info("Starting Scout MCP server (transport=%s)", args.transport)
 
