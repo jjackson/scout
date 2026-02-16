@@ -214,6 +214,9 @@ DB_CREDENTIAL_KEY = env("DB_CREDENTIAL_KEY", default="")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
 DEFAULT_LLM_MODEL = "claude-sonnet-4-5-20250929"
 
+# MCP server URL (Scout data access layer)
+MCP_SERVER_URL = env("MCP_SERVER_URL", default="http://localhost:8100/mcp")
+
 
 # Cache configuration
 # Use Redis if available, otherwise fall back to local memory cache
