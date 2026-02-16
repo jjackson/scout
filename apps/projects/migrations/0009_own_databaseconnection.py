@@ -1,9 +1,12 @@
 """
-State-only migration: declare DatabaseConnection as owned by projects app.
+Declare DatabaseConnection as owned by projects app.
 
-The underlying database table (datasources_databaseconnection) is unchanged.
 The model class now lives in apps.projects.models with
 Meta.db_table = "datasources_databaseconnection".
+
+On existing databases the table already exists (from the old datasources app)
+so the CREATE TABLE IF NOT EXISTS is a no-op.  On fresh databases (e.g. test)
+this migration creates the table for the first time.
 
 This migration must come before 0006 which references
 projects.databaseconnection.  We insert it into the dependency chain
@@ -49,6 +52,26 @@ class Migration(migrations.Migration):
                     },
                 ),
             ],
-            database_operations=[],
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                        CREATE TABLE IF NOT EXISTS datasources_databaseconnection (
+                            id uuid NOT NULL PRIMARY KEY,
+                            name varchar(255) NOT NULL,
+                            description text NOT NULL DEFAULT '',
+                            db_host varchar(255) NOT NULL,
+                            db_port integer NOT NULL DEFAULT 5432,
+                            db_name varchar(255) NOT NULL,
+                            db_user bytea NOT NULL,
+                            db_password bytea NOT NULL,
+                            is_active boolean NOT NULL DEFAULT true,
+                            created_by_id bigint REFERENCES users_user(id) ON DELETE SET NULL,
+                            created_at timestamptz NOT NULL DEFAULT now(),
+                            updated_at timestamptz NOT NULL DEFAULT now()
+                        );
+                    """,
+                    reverse_sql=migrations.RunSQL.noop,
+                ),
+            ],
         ),
     ]
