@@ -36,10 +36,8 @@ from apps.agents.graph.state import AgentState
 from apps.agents.prompts.artifact_prompt import ARTIFACT_PROMPT_ADDITION
 from apps.agents.prompts.base_system import BASE_SYSTEM_PROMPT
 from apps.agents.tools.artifact_tool import create_artifact_tools
-from apps.agents.tools.describe_table import create_describe_table_tool
 from apps.agents.tools.learning_tool import create_save_learning_tool
 from apps.agents.tools.recipe_tool import create_recipe_tool
-from apps.agents.tools.sql_tool import create_sql_tool
 from apps.knowledge.services.retriever import KnowledgeRetriever
 from apps.projects.services.data_dictionary import DataDictionaryGenerator
 
@@ -55,13 +53,13 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0
-LARGE_SCHEMA_THRESHOLD = 15  # Number of tables above which describe_table is added
 
 
 def build_agent_graph(
     project: "Project",
     user: "User | None" = None,
     checkpointer: "BaseCheckpointSaver | None" = None,
+    mcp_tools: list | None = None,
 ):
     """
     Build a LangGraph agent graph for a specific project.
@@ -127,7 +125,7 @@ def build_agent_graph(
     logger.info("Building agent graph for project: %s", project.slug)
 
     # --- Build tools ---
-    tools = _build_tools(project, user)
+    tools = _build_tools(project, user, mcp_tools or [])
     logger.debug("Created %d tools for project %s", len(tools), project.slug)
 
     # --- Build LLM with tools ---
@@ -246,35 +244,34 @@ def build_agent_graph(
     return compiled
 
 
-def _build_tools(project: "Project", user: "User | None") -> list:
+def _build_tools(project: "Project", user: "User | None", mcp_tools: list) -> list:
     """
     Build the tool list for the agent.
 
-    Always includes:
-    - execute_sql: For running queries against the project database
+    MCP tools (from the Scout MCP server):
+    - query: Execute read-only SQL queries
+    - list_tables: List available tables
+    - describe_table: Get table column details
+    - get_metadata: Full schema snapshot
+
+    Local tools (always included):
     - save_learning: For persisting discovered corrections
     - create_artifact: For creating interactive visualizations
     - update_artifact: For updating existing artifacts
-
-    Conditionally includes:
-    - describe_table: For large schemas (>15 tables) where full details
-      can't fit in the system prompt
+    - create_recipe: For creating replayable analysis workflows
 
     Args:
         project: The Project model instance.
         user: Optional User for tracking learning discovery.
+        mcp_tools: LangChain tools loaded from the MCP server.
 
     Returns:
         List of LangChain tool functions.
     """
-    tools = []
-
-    # SQL execution tool (always included)
-    sql_tool = create_sql_tool(project)
-    tools.append(sql_tool)
+    # Start with MCP tools (data access)
+    tools = list(mcp_tools)
 
     # Learning tool (always included)
-    # Create a placeholder user if none provided
     learning_tool = create_save_learning_tool(project, user)
     tools.append(learning_tool)
 
@@ -285,19 +282,6 @@ def _build_tools(project: "Project", user: "User | None") -> list:
     # Recipe tool (always included)
     recipe_tool = create_recipe_tool(project, user)
     tools.append(recipe_tool)
-
-    # Describe table tool (for large schemas)
-    dd = project.data_dictionary or {}
-    table_count = len(dd.get("tables", {}))
-
-    if table_count > LARGE_SCHEMA_THRESHOLD:
-        logger.debug(
-            "Adding describe_table tool (schema has %d tables, threshold is %d)",
-            table_count,
-            LARGE_SCHEMA_THRESHOLD,
-        )
-        describe_tool = create_describe_table_tool(project)
-        tools.append(describe_tool)
 
     return tools
 
@@ -359,9 +343,12 @@ def _build_system_prompt(project: "Project") -> str:
     sections.append(f"""
 ## Query Configuration
 
+- Project ID: {project.id}
 - Maximum rows per query: {project.max_rows_per_query}
 - Query timeout: {project.max_query_timeout_seconds} seconds
 - Schema: {project.db_schema}
+
+**Important:** When using the `query`, `list_tables`, `describe_table`, or `get_metadata` tools, always pass `project_id` = "{project.id}".
 
 When results are truncated, suggest adding filters or using aggregations to reduce the result size.
 """)

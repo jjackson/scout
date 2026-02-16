@@ -23,6 +23,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.agents.graph.base import build_agent_graph
+from apps.agents.mcp_client import get_mcp_tools
 from apps.agents.memory.checkpointer import get_database_url
 from apps.chat.models import Thread
 from apps.chat.stream import langgraph_to_ui_stream
@@ -345,6 +346,14 @@ async def chat_view(request):
     except Exception:
         logger.warning("Failed to upsert thread %s", thread_id, exc_info=True)
 
+    # Load MCP tools (data access via MCP server)
+    try:
+        mcp_tools = await get_mcp_tools()
+    except Exception as e:
+        error_ref = hashlib.sha256(f"{time.time()}{e}".encode()).hexdigest()[:8]
+        logger.exception("Failed to load MCP tools [ref=%s]", error_ref)
+        return JsonResponse({"error": f"Agent initialization failed. Ref: {error_ref}"}, status=500)
+
     # Build agent (retry once with fresh checkpointer on connection errors)
     try:
         checkpointer = await _ensure_checkpointer()
@@ -352,6 +361,7 @@ async def chat_view(request):
             project=project,
             user=user,
             checkpointer=checkpointer,
+            mcp_tools=mcp_tools,
         )
     except Exception:
         # Connection may have gone stale -- force a new checkpointer and retry
@@ -362,6 +372,7 @@ async def chat_view(request):
                 project=project,
                 user=user,
                 checkpointer=checkpointer,
+                mcp_tools=mcp_tools,
             )
         except Exception as e:
             error_ref = hashlib.sha256(f"{time.time()}{e}".encode()).hexdigest()[:8]

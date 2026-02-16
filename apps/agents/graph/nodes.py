@@ -120,37 +120,40 @@ def check_result_node(state: AgentState) -> dict[str, Any]:
                 }
             return {"needs_correction": False, "correction_context": {"failed_sql": "", "tables_accessed": []}}
 
-        # Check for explicit error field in the result
-        if isinstance(result, dict) and result.get("error"):
-            error_message = result["error"]
-            logger.info(
-                "Detected error in tool result: %s",
-                error_message[:100] + "..." if len(error_message) > 100 else error_message,
-            )
+        # Check for error in the result (supports both formats)
+        if isinstance(result, dict):
+            error_message = _extract_error(result)
+            if error_message:
+                logger.info(
+                    "Detected error in tool result: %s",
+                    error_message[:100] + "..." if len(error_message) > 100 else error_message,
+                )
 
-            return {
-                "needs_correction": True,
-                "correction_context": {
-                    "error_type": _classify_error(error_message),
-                    "error_message": error_message,
-                    "tool_name": last_message.name or "execute_sql",
-                    "failed_sql": result.get("sql_executed", ""),
-                    "tables_accessed": result.get("tables_accessed", []),
-                },
-            }
+                data = result.get("data", result)
+                return {
+                    "needs_correction": True,
+                    "correction_context": {
+                        "error_type": _classify_error(error_message),
+                        "error_message": error_message,
+                        "tool_name": last_message.name or "unknown",
+                        "failed_sql": data.get("sql_executed", ""),
+                        "tables_accessed": data.get("tables_accessed", []),
+                    },
+                }
 
     # Handle dict content directly
     elif isinstance(content, dict):
-        if content.get("error"):
-            error_message = content["error"]
+        error_message = _extract_error(content)
+        if error_message:
+            data = content.get("data", content)
             return {
                 "needs_correction": True,
                 "correction_context": {
                     "error_type": _classify_error(error_message),
                     "error_message": error_message,
-                    "tool_name": last_message.name or "execute_sql",
-                    "failed_sql": content.get("sql_executed", ""),
-                    "tables_accessed": content.get("tables_accessed", []),
+                    "tool_name": last_message.name or "unknown",
+                    "failed_sql": data.get("sql_executed", ""),
+                    "tables_accessed": data.get("tables_accessed", []),
                 },
             }
 
@@ -260,6 +263,32 @@ Be helpful and constructive. The goal is to help the user get unstuck."""
         "needs_correction": False,
         "correction_context": correction_context,  # Preserve for potential learning
     }
+
+
+def _extract_error(result: dict) -> str | None:
+    """
+    Extract an error message from a tool result dict.
+
+    Supports two formats:
+    - Direct: {"error": "message string"}
+    - MCP envelope: {"success": false, "error": {"code": "...", "message": "..."}}
+
+    Returns:
+        The error message string, or None if no error detected.
+    """
+    # MCP envelope format: {"success": false, "error": {"code": ..., "message": ...}}
+    if result.get("success") is False:
+        err = result.get("error", {})
+        if isinstance(err, dict):
+            return err.get("message", str(err))
+        return str(err) if err else None
+
+    # Direct format: {"error": "message string"}
+    err = result.get("error")
+    if err:
+        return str(err)
+
+    return None
 
 
 def _classify_error(error_message: str) -> str:
