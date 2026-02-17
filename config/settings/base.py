@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount.providers.github",
     # Custom OAuth providers (example implementation)
     "apps.users.providers.commcare",
+    "apps.users.providers.commcare_connect",
     # Local apps
     "apps.users",
     "apps.projects",
@@ -193,6 +194,9 @@ SOCIALACCOUNT_PROVIDERS = {
     },
     "github": {
         "SCOPE": ["user:email"],
+    },
+    "commcare_connect": {
+        "SCOPE": ["read"],
     },
 }
 

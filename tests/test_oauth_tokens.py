@@ -53,3 +53,18 @@ class TestTokenEncryptionAdapter:
         """Should raise ValueError when DB_CREDENTIAL_KEY is not set."""
         with pytest.raises(ValueError, match="DB_CREDENTIAL_KEY"):
             adapter.encrypt_token("some_token")
+
+
+class TestCommCareConnectProvider:
+    """Test the CommCare Connect OAuth provider is properly configured."""
+
+    def test_provider_registered(self):
+        """CommCare Connect provider should be discoverable by allauth."""
+        from allauth.socialaccount import providers
+        registry = providers.registry
+        provider_cls = registry.get_class("commcare_connect")
+        assert provider_cls is not None
+        assert provider_cls.id == "commcare_connect"
+
+    def test_provider_in_installed_apps(self):
+        assert "apps.users.providers.commcare_connect" in settings.INSTALLED_APPS
