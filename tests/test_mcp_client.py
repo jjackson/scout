@@ -225,8 +225,7 @@ class TestMCPClient:
         """get_mcp_client should return the same instance on repeated calls."""
         import apps.agents.mcp_client as mod
 
-        # Reset singleton
-        mod._mcp_client = None
+        mod.reset_circuit_breaker()
 
         with patch.object(mod, "settings") as mock_settings:
             mock_settings.MCP_SERVER_URL = "http://localhost:8100/mcp"
@@ -235,13 +234,14 @@ class TestMCPClient:
             client2 = await mod.get_mcp_client()
             assert client1 is client2
 
-        # Clean up
-        mod._mcp_client = None
+        mod.reset_circuit_breaker()
 
     @pytest.mark.asyncio
     async def test_get_mcp_tools_calls_get_tools(self):
         """get_mcp_tools should call client.get_tools()."""
         import apps.agents.mcp_client as mod
+
+        mod.reset_circuit_breaker()
 
         mock_client = AsyncMock()
         mock_tool = AsyncMock()
@@ -255,5 +255,4 @@ class TestMCPClient:
         assert tools[0].name == "query"
         mock_client.get_tools.assert_awaited_once()
 
-        # Clean up
-        mod._mcp_client = None
+        mod.reset_circuit_breaker()

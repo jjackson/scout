@@ -204,8 +204,17 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 def _setup_django() -> None:
-    """Initialize Django ORM for model access."""
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+    """Initialize Django ORM for model access.
+
+    Requires DJANGO_SETTINGS_MODULE to be set in the environment.
+    Does NOT default to development settings to avoid accidentally
+    running with DEBUG=True in production.
+    """
+    if "DJANGO_SETTINGS_MODULE" not in os.environ:
+        raise RuntimeError(
+            "DJANGO_SETTINGS_MODULE environment variable is required. "
+            "Set it to 'config.settings.development' or 'config.settings.production'."
+        )
     import django
 
     django.setup()
@@ -230,12 +239,11 @@ def main() -> None:
 
     logger.info("Starting Scout MCP server (transport=%s)", args.transport)
 
-    kwargs: dict = {"transport": args.transport}
     if args.transport == "streamable-http":
-        kwargs["host"] = args.host
-        kwargs["port"] = args.port
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
 
-    mcp.run(**kwargs)
+    mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":

@@ -24,14 +24,19 @@ Chunk types used:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from langchain_core.messages import ToolMessage
 
 logger = logging.getLogger(__name__)
+
+# Maximum wall-clock time for agent execution before we abort.
+AGENT_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
 def _sse(chunk: dict) -> str:
@@ -46,6 +51,9 @@ def _tool_content_to_str(output: Any) -> str:
     if isinstance(output, str):
         return output
     return str(output)
+
+
+audit_logger = logging.getLogger("scout.agent.audit")
 
 
 async def langgraph_to_ui_stream(
@@ -67,7 +75,10 @@ async def langgraph_to_ui_stream(
     yield _sse({"type": "start-step"})
 
     try:
+        deadline = asyncio.get_event_loop().time() + AGENT_TIMEOUT_SECONDS
         async for event in agent.astream_events(input_state, config=config, version="v2"):
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError(f"Agent execution exceeded {AGENT_TIMEOUT_SECONDS}s timeout")
             event_type = event.get("event")
 
             if event_type == "on_chat_model_stream":
@@ -145,18 +156,43 @@ async def langgraph_to_ui_stream(
                     tool_name = event.get("name", "unknown")
                     tool_call_id = run_id or uuid.uuid4().hex
 
+                    # Audit log with user/thread context
+                    audit_logger.info(
+                        "tool_call tool=%s user_id=%s thread_id=%s project_id=%s",
+                        tool_name,
+                        input_state.get("user_id", ""),
+                        config.get("configurable", {}).get("thread_id", ""),
+                        input_state.get("project_id", ""),
+                    )
+
                     yield _sse({
                         "type": "tool-input-available",
                         "toolCallId": tool_call_id,
                         "toolName": tool_name,
                         "input": {},
                     })
+                    truncated = len(content) > 2000
+                    display_content = content[:2000]
+                    if truncated:
+                        display_content += f"\n\n... (truncated, {len(content)} chars total)"
                     yield _sse({
                         "type": "tool-output-available",
                         "toolCallId": tool_call_id,
-                        "output": content[:2000],
+                        "output": display_content,
                     })
 
+    except TimeoutError:
+        logger.warning("Agent execution timed out after %ds", AGENT_TIMEOUT_SECONDS)
+        if reasoning_started:
+            yield _sse({"type": "reasoning-end", "id": reasoning_id})
+        if not text_started:
+            yield _sse({"type": "text-start", "id": text_id})
+            text_started = True
+        yield _sse({
+            "type": "text-delta",
+            "id": text_id,
+            "delta": "\n\nThe request timed out. Try simplifying your question or breaking it into smaller steps.",
+        })
     except Exception:
         logger.exception("Error during agent streaming")
         if reasoning_started:
