@@ -12,6 +12,8 @@ import asyncio
 import logging
 import time
 
+from allauth.socialaccount.models import SocialToken
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -111,3 +113,36 @@ def reset_circuit_breaker() -> None:
     _mcp_client = None
     _consecutive_failures = 0
     _last_failure_time = 0.0
+
+
+# --- OAuth token retrieval ---
+
+COMMCARE_PROVIDERS = frozenset({"commcare", "commcare_connect"})
+
+
+async def get_user_oauth_tokens(user) -> dict[str, str]:
+    """Retrieve decrypted OAuth tokens for a user's CommCare providers.
+
+    Returns a dict mapping provider ID to access token string.
+    Only includes CommCare HQ and CommCare Connect tokens.
+    Returns empty dict if user is None or has no connected accounts.
+    """
+    if user is None or not getattr(user, "pk", None):
+        return {}
+
+    tokens = await sync_to_async(_get_tokens_sync)(user)
+    return tokens
+
+
+def _get_tokens_sync(user) -> dict[str, str]:
+    """Synchronous token retrieval — called via sync_to_async."""
+    social_tokens = SocialToken.objects.filter(
+        account__user=user,
+        account__provider__in=COMMCARE_PROVIDERS,
+    ).select_related("account")
+
+    return {
+        st.account.provider: st.token
+        for st in social_tokens
+        if st.account.provider in COMMCARE_PROVIDERS
+    }

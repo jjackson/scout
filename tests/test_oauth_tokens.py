@@ -2,11 +2,14 @@
 Tests for OAuth token storage, encryption, retrieval, and refresh.
 """
 
-from unittest.mock import patch
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
+from asgiref.sync import async_to_sync
 from cryptography.fernet import Fernet
 from django.conf import settings
+from django.utils import timezone
 
 
 class TestTokenStorageSettings:
@@ -68,3 +71,148 @@ class TestCommCareConnectProvider:
 
     def test_provider_in_installed_apps(self):
         assert "apps.users.providers.commcare_connect" in settings.INSTALLED_APPS
+
+
+class TestGetUserOAuthTokens:
+    """Test the get_user_oauth_tokens helper in mcp_client."""
+
+    def _make_social_token(self, provider, token, token_secret="refresh_tok", expires_at=None):
+        """Build a mock SocialToken."""
+        st = MagicMock()
+        st.account.provider = provider
+        st.token = token
+        st.token_secret = token_secret
+        st.expires_at = expires_at
+        return st
+
+    @patch("apps.agents.mcp_client.SocialToken")
+    def test_returns_tokens_for_connected_providers(self, mock_social_token_cls):
+        from apps.agents.mcp_client import get_user_oauth_tokens
+
+        user = MagicMock()
+        user.pk = 1
+
+        mock_qs = MagicMock()
+        mock_social_token_cls.objects.filter.return_value = mock_qs
+        mock_qs.select_related.return_value = [
+            self._make_social_token("commcare", "hq_token_123"),
+            self._make_social_token("commcare_connect", "connect_token_456"),
+        ]
+
+        result = async_to_sync(get_user_oauth_tokens)(user)
+        assert result == {
+            "commcare": "hq_token_123",
+            "commcare_connect": "connect_token_456",
+        }
+
+    @patch("apps.agents.mcp_client.SocialToken")
+    def test_returns_empty_dict_for_no_tokens(self, mock_social_token_cls):
+        from apps.agents.mcp_client import get_user_oauth_tokens
+
+        user = MagicMock()
+        user.pk = 1
+
+        mock_qs = MagicMock()
+        mock_social_token_cls.objects.filter.return_value = mock_qs
+        mock_qs.select_related.return_value = []
+
+        result = async_to_sync(get_user_oauth_tokens)(user)
+        assert result == {}
+
+    @patch("apps.agents.mcp_client.SocialToken")
+    def test_skips_non_commcare_providers(self, mock_social_token_cls):
+        from apps.agents.mcp_client import get_user_oauth_tokens
+
+        user = MagicMock()
+        user.pk = 1
+
+        mock_qs = MagicMock()
+        mock_social_token_cls.objects.filter.return_value = mock_qs
+        mock_qs.select_related.return_value = [
+            self._make_social_token("google", "google_token"),
+            self._make_social_token("commcare", "hq_token"),
+        ]
+
+        result = async_to_sync(get_user_oauth_tokens)(user)
+        assert result == {"commcare": "hq_token"}
+
+    def test_returns_empty_dict_for_none_user(self):
+        from apps.agents.mcp_client import get_user_oauth_tokens
+
+        result = async_to_sync(get_user_oauth_tokens)(None)
+        assert result == {}
+
+
+class TestTokenRefresh:
+    """Test the OAuth token refresh service."""
+
+    @patch("apps.users.services.token_refresh.requests.post")
+    def test_refresh_updates_token(self, mock_post):
+        from apps.users.services.token_refresh import refresh_oauth_token
+
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={
+                "access_token": "new_access_token",
+                "refresh_token": "new_refresh_token",
+                "expires_in": 3600,
+            }),
+        )
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        social_token = MagicMock()
+        social_token.token = "old_access_token"
+        social_token.token_secret = "old_refresh_token"
+        social_token.app.client_id = "client_123"
+        social_token.app.secret = "secret_456"
+
+        # CommCare HQ token URL
+        token_url = "https://www.commcarehq.org/oauth/token/"
+
+        result = refresh_oauth_token(social_token, token_url)
+
+        assert result == "new_access_token"
+        assert social_token.token == "new_access_token"
+        assert social_token.token_secret == "new_refresh_token"
+        social_token.save.assert_called_once()
+
+    @patch("apps.users.services.token_refresh.requests.post")
+    def test_refresh_failure_raises(self, mock_post):
+        from apps.users.services.token_refresh import (
+            TokenRefreshError,
+            refresh_oauth_token,
+        )
+
+        mock_post.return_value = MagicMock(status_code=400)
+        mock_post.return_value.raise_for_status.side_effect = Exception("Bad Request")
+
+        social_token = MagicMock()
+        social_token.token_secret = "old_refresh_token"
+        social_token.app.client_id = "client_123"
+        social_token.app.secret = "secret_456"
+
+        with pytest.raises(TokenRefreshError):
+            refresh_oauth_token(social_token, "https://example.com/oauth/token/")
+
+    def test_token_needs_refresh_when_expiring_soon(self):
+        from apps.users.services.token_refresh import token_needs_refresh
+
+        soon = timezone.now() + timedelta(minutes=3)
+        assert token_needs_refresh(soon) is True
+
+    def test_token_does_not_need_refresh_when_fresh(self):
+        from apps.users.services.token_refresh import token_needs_refresh
+
+        later = timezone.now() + timedelta(hours=1)
+        assert token_needs_refresh(later) is False
+
+    def test_token_needs_refresh_when_expired(self):
+        from apps.users.services.token_refresh import token_needs_refresh
+
+        past = timezone.now() - timedelta(hours=1)
+        assert token_needs_refresh(past) is True
+
+    def test_token_needs_refresh_when_none(self):
+        from apps.users.services.token_refresh import token_needs_refresh
+
+        assert token_needs_refresh(None) is False
