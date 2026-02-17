@@ -28,6 +28,7 @@ CONNECTION_ERROR = "CONNECTION_ERROR"
 QUERY_TIMEOUT = "QUERY_TIMEOUT"
 NOT_FOUND = "NOT_FOUND"
 INTERNAL_ERROR = "INTERNAL_ERROR"
+AUTH_TOKEN_EXPIRED = "AUTH_TOKEN_EXPIRED"
 
 
 def success_response(
@@ -76,6 +77,15 @@ class Timer:
         return int((time.monotonic() - self._start) * 1000)
 
 
+# Fields that must never appear in audit logs
+_SCRUB_KEYS = frozenset({"oauth_tokens"})
+
+
+def scrub_extra_fields(extra: dict[str, Any]) -> dict[str, Any]:
+    """Remove sensitive fields from audit log extra_fields."""
+    return {k: v for k, v in extra.items() if k not in _SCRUB_KEYS}
+
+
 @asynccontextmanager
 async def tool_context(tool_name: str, project_id: str, **extra_fields: Any):
     """Context manager that times a tool call and logs an audit record.
@@ -101,5 +111,7 @@ async def tool_context(tool_name: str, project_id: str, **extra_fields: Any):
             project_id,
             status,
             timer.elapsed_ms,
-            " ".join(f"{k}={v!r}" for k, v in extra_fields.items()) if extra_fields else "",
+            " ".join(f"{k}={v!r}" for k, v in scrub_extra_fields(extra_fields).items())
+            if extra_fields
+            else "",
         )

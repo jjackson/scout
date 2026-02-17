@@ -423,3 +423,53 @@ class TestToolHandlers:
 
         assert result["success"] is False
         assert result["error"]["code"] == VALIDATION_ERROR
+
+
+# --- Auth token extraction tests ---
+
+
+class TestAuthTokenExtraction:
+    """Test MCP auth token extraction from _meta field."""
+
+    def test_extract_tokens_from_meta(self):
+        from mcp_server.auth import extract_oauth_tokens
+
+        meta = {"oauth_tokens": {"commcare": "tok_abc", "commcare_connect": "tok_xyz"}}
+        assert extract_oauth_tokens(meta) == {"commcare": "tok_abc", "commcare_connect": "tok_xyz"}
+
+    def test_extract_tokens_missing_meta(self):
+        from mcp_server.auth import extract_oauth_tokens
+
+        assert extract_oauth_tokens({}) == {}
+
+    def test_extract_tokens_none_meta(self):
+        from mcp_server.auth import extract_oauth_tokens
+
+        assert extract_oauth_tokens(None) == {}
+
+
+class TestAuditLogScrubbing:
+    """Test that oauth_tokens are scrubbed from audit log extra_fields."""
+
+    def test_scrub_removes_oauth_tokens(self):
+        from mcp_server.envelope import scrub_extra_fields
+
+        extra = {"sql": "SELECT 1", "oauth_tokens": {"commcare": "secret"}}
+        scrubbed = scrub_extra_fields(extra)
+        assert "oauth_tokens" not in scrubbed
+        assert scrubbed["sql"] == "SELECT 1"
+
+    def test_scrub_noop_when_no_tokens(self):
+        from mcp_server.envelope import scrub_extra_fields
+
+        extra = {"sql": "SELECT 1"}
+        assert scrub_extra_fields(extra) == {"sql": "SELECT 1"}
+
+
+class TestAuthTokenExpiredCode:
+    """Test AUTH_TOKEN_EXPIRED error code exists."""
+
+    def test_code_defined(self):
+        from mcp_server.envelope import AUTH_TOKEN_EXPIRED
+
+        assert AUTH_TOKEN_EXPIRED == "AUTH_TOKEN_EXPIRED"
