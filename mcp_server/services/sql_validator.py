@@ -1,38 +1,24 @@
 """
-SQL validation and execution tool for the Scout data agent platform.
+SQL validation for the Scout MCP server.
 
-This module provides:
-- SQLValidationError: Exception for SQL validation failures
-- SQLValidator: Validates and sanitizes SQL queries
-- create_sql_tool: Factory function to create a LangChain tool for SQL execution
+This module provides the SQL validation layer that ensures all queries
+executed through the MCP server are safe and comply with project rules.
 
 Security features:
-- Only SELECT statements allowed
+- Only SELECT statements allowed (including UNION/INTERSECT/EXCEPT)
 - Single statement enforcement
-- Dangerous function blocking
+- Dangerous function blocking (40+ PostgreSQL functions)
 - Schema/table allowlist enforcement
-- Automatic LIMIT injection
+- Automatic LIMIT injection and capping
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 
-import psycopg2
-import psycopg2.errors
-import psycopg2.extensions
 import sqlglot
-from langchain_core.tools import tool
 from sqlglot import exp
-
-from apps.projects.services.db_manager import get_pool_manager
-from apps.projects.services.rate_limiter import RateLimitExceeded, get_rate_limiter
-
-if TYPE_CHECKING:
-    from apps.projects.models import Project
-    from apps.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -430,248 +416,9 @@ class SQLValidator:
         return [t["table"] for t in self._extract_tables(statement)]
 
 
-@dataclass
-class SQLExecutionResult:
-    """
-    Result of a SQL query execution.
-
-    Attributes:
-        columns: List of column names in the result
-        rows: List of rows, where each row is a list of values
-        row_count: Number of rows returned
-        truncated: Whether the results were truncated due to limit
-        sql_executed: The actual SQL that was executed (may differ from input)
-        tables_accessed: List of tables accessed by the query
-        metric_used: Name of metric if the query used a predefined metric
-        knowledge_applied: Any business knowledge applied to the query
-        caveats: List of warnings or notes about the results
-        error: Error message if the query failed
-    """
-
-    columns: list[str] = field(default_factory=list)
-    rows: list[list[Any]] = field(default_factory=list)
-    row_count: int = 0
-    truncated: bool = False
-    sql_executed: str = ""
-    tables_accessed: list[str] = field(default_factory=list)
-    metric_used: str | None = None
-    knowledge_applied: list[str] = field(default_factory=list)
-    caveats: list[str] = field(default_factory=list)
-    error: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "columns": self.columns,
-            "rows": self.rows,
-            "row_count": self.row_count,
-            "truncated": self.truncated,
-            "sql_executed": self.sql_executed,
-            "tables_accessed": self.tables_accessed,
-            "metric_used": self.metric_used,
-            "knowledge_applied": self.knowledge_applied,
-            "caveats": self.caveats,
-            "error": self.error,
-        }
-
-
-def create_sql_tool(project: Project, user: User | None = None):
-    """
-    Factory function to create a SQL execution tool for a specific project.
-
-    The returned tool validates and executes SQL queries against the project's
-    database with appropriate security restrictions.
-
-    Args:
-        project: The Project model instance containing database connection
-                 settings and access restrictions.
-        user: The user executing the queries (for rate limiting).
-
-    Returns:
-        A LangChain tool function that executes SQL queries.
-
-    Example:
-        >>> from apps.projects.models import Project
-        >>> project = Project.objects.get(slug="my-project")
-        >>> sql_tool = create_sql_tool(project, user)
-        >>> result = sql_tool.invoke({"query": "SELECT * FROM users LIMIT 10"})
-    """
-    # Build search_path for the connection
-    search_path = project.db_schema
-
-    # Create validator with project settings
-    validator = SQLValidator(
-        schema=project.db_schema,
-        allowed_schemas=[],
-        allowed_tables=project.allowed_tables or [],
-        excluded_tables=project.excluded_tables or [],
-        max_limit=project.max_rows_per_query,
-    )
-
-    @tool
-    def execute_sql(query: str) -> dict[str, Any]:
-        """
-        Execute a SQL SELECT query against the project database.
-
-        This tool validates the query for safety, enforces table access restrictions,
-        and automatically limits result size. Only SELECT queries are allowed.
-
-        Args:
-            query: The SQL SELECT query to execute. Must be a single statement.
-                   INSERT, UPDATE, DELETE, and other modification statements are
-                   not allowed.
-
-        Returns:
-            A dictionary containing:
-            - columns: List of column names
-            - rows: List of result rows
-            - row_count: Number of rows returned
-            - truncated: Whether results were truncated due to limit
-            - sql_executed: The actual SQL executed (may include injected LIMIT)
-            - tables_accessed: Tables referenced in the query
-            - caveats: Any warnings or notes about the results
-            - error: Error message if the query failed (None on success)
-
-        Example:
-            >>> execute_sql("SELECT name, email FROM customers WHERE active = true")
-            {
-                "columns": ["name", "email"],
-                "rows": [["John Doe", "john@example.com"], ...],
-                "row_count": 42,
-                "truncated": false,
-                "sql_executed": "SELECT name, email FROM customers WHERE active = true LIMIT 500",
-                "tables_accessed": ["customers"],
-                "caveats": [],
-                "error": null
-            }
-        """
-        result = SQLExecutionResult()
-
-        # Validate the query
-        try:
-            statement = validator.validate(query)
-        except SQLValidationError as e:
-            logger.warning(
-                "SQL validation failed for project %s: %s",
-                project.slug,
-                e.message,
-            )
-            result.error = e.message
-            return result.to_dict()
-
-        # Extract tables before modifying the statement
-        result.tables_accessed = validator.get_tables_accessed(statement)
-
-        # Inject or cap LIMIT
-        modified_statement = validator.inject_limit(statement)
-        result.sql_executed = modified_statement.sql(dialect=validator.dialect)
-
-        # Check if we're potentially truncating
-        original_limit = statement.args.get("limit")
-        if original_limit:
-            original_limit_value = validator._get_limit_value(original_limit)
-            if original_limit_value and original_limit_value > validator.max_limit:
-                result.caveats.append(
-                    f"Results limited to {validator.max_limit} rows "
-                    f"(original query requested {original_limit_value})"
-                )
-                result.truncated = True
-
-        # Check rate limit before executing
-        try:
-            get_rate_limiter().check_rate_limit(user, project)
-        except RateLimitExceeded as e:
-            result.error = str(e)
-            return result.to_dict()
-
-        # Execute the query using connection pool
-        try:
-            with get_pool_manager().get_connection(project) as conn:
-                # Create cursor and execute
-                cursor = conn.cursor()
-                try:
-                    # Set search_path to include materialized schemas
-                    if search_path:
-                        cursor.execute(f"SET search_path TO {search_path}")
-
-                    cursor.execute(result.sql_executed)
-
-                    # Fetch results
-                    if cursor.description:
-                        result.columns = [desc[0] for desc in cursor.description]
-                        result.rows = [list(row) for row in cursor.fetchall()]
-                        result.row_count = len(result.rows)
-
-                        # Check if we hit the limit (may indicate truncation)
-                        if result.row_count == validator.max_limit:
-                            result.truncated = True
-                            if not any("limited to" in c for c in result.caveats):
-                                result.caveats.append(
-                                    f"Results may be truncated (returned exactly {validator.max_limit} rows)"
-                                )
-                finally:
-                    cursor.close()
-
-            # Record successful query for rate limiting
-            get_rate_limiter().record_query(user, project)
-
-            logger.info(
-                "SQL query executed for project %s: %d rows returned",
-                project.slug,
-                result.row_count,
-            )
-
-        except psycopg2.errors.QueryCanceled as e:
-            logger.warning(
-                "Query timeout for project %s: %s",
-                project.slug,
-                str(e),
-            )
-            result.error = (
-                f"Query timed out after {project.max_query_timeout_seconds} seconds. "
-                "Consider adding filters or limiting the data range."
-            )
-
-        except psycopg2.Error as e:
-            logger.error(
-                "Database error for project %s: %s",
-                project.slug,
-                str(e),
-                exc_info=True,
-            )
-            # Sanitize error message - don't expose internal details
-            error_msg = str(e)
-            if "password authentication failed" in error_msg.lower():
-                result.error = "Database authentication failed. Please contact an administrator."
-            elif "could not connect" in error_msg.lower():
-                result.error = "Could not connect to the database. Please try again later."
-            elif "does not exist" in error_msg.lower():
-                # This is a user error (bad table/column name), safe to show
-                result.error = f"Database error: {error_msg}"
-            else:
-                # Generic error for other cases
-                result.error = f"Query execution failed: {error_msg}"
-
-        except Exception:
-            logger.exception(
-                "Unexpected error executing query for project %s",
-                project.slug,
-            )
-            result.error = "An unexpected error occurred while executing the query."
-
-        return result.to_dict()
-
-    # Set a descriptive name for the tool
-    execute_sql.name = "execute_sql"
-
-    return execute_sql
-
-
 __all__ = [
-    "SQLValidationError",
-    "SQLValidator",
-    "SQLExecutionResult",
-    "create_sql_tool",
     "DANGEROUS_FUNCTIONS",
     "FORBIDDEN_STATEMENT_TYPES",
+    "SQLValidationError",
+    "SQLValidator",
 ]

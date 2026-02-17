@@ -13,7 +13,6 @@ from typing import Any
 
 from asgiref.sync import sync_to_async
 
-from apps.agents.tools.sql_tool import SQLValidationError, SQLValidator
 from apps.projects.services.db_manager import get_pool_manager
 from mcp_server.context import ProjectContext
 from mcp_server.envelope import (
@@ -23,6 +22,7 @@ from mcp_server.envelope import (
     VALIDATION_ERROR,
     error_response,
 )
+from mcp_server.services.sql_validator import SQLValidationError, SQLValidator
 
 logger = logging.getLogger(__name__)
 

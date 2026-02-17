@@ -11,7 +11,8 @@ Tests cover security-critical functionality:
 - Table filtering
 """
 import pytest
-from apps.agents.tools.sql_tool import SQLValidator, SQLValidationError
+
+from mcp_server.services.sql_validator import SQLValidationError, SQLValidator
 
 
 class TestSQLInjectionPrevention:
