@@ -176,6 +176,8 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 # Allow OAuth users to skip email verification since provider already verified
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+# Store OAuth tokens so we can use them for data materialization
+SOCIALACCOUNT_STORE_TOKENS = True
 
 # Redirect URLs after login/logout
 LOGIN_REDIRECT_URL = "/"
