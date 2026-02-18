@@ -21,7 +21,9 @@ export function LoginForm() {
   const login = useAppStore((s) => s.authActions.login)
 
   useEffect(() => {
-    api.get<OAuthProvider[]>("/api/auth/providers/").then(setProviders).catch(() => {})
+    api.get<{ providers: OAuthProvider[] }>("/api/auth/providers/")
+      .then((data) => setProviders(data.providers))
+      .catch(() => {})
   }, [])
 
   async function handleSubmit(e: FormEvent) {

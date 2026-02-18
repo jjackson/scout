@@ -20,8 +20,8 @@ export function ConnectionsPage() {
     setLoading(true)
     setError(null)
     try {
-      const data = await api.get<OAuthProvider[]>("/api/auth/providers/")
-      setProviders(data)
+      const data = await api.get<{ providers: OAuthProvider[] }>("/api/auth/providers/")
+      setProviders(data.providers)
     } catch {
       setError("Failed to load OAuth providers.")
     } finally {
@@ -35,6 +35,7 @@ export function ConnectionsPage() {
 
   async function handleDisconnect(providerId: string) {
     setDisconnecting(providerId)
+    setError(null)
     try {
       await api.post(`/api/auth/providers/${providerId}/disconnect/`)
       await fetchProviders()
@@ -53,17 +54,7 @@ export function ConnectionsPage() {
     )
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <p className="text-sm text-destructive" data-testid="connections-error">
-          {error}
-        </p>
-      </div>
-    )
-  }
-
-  if (providers.length === 0) {
+  if (!error && providers.length === 0) {
     return (
       <div className="flex items-center justify-center p-8">
         <p className="text-sm text-muted-foreground">
@@ -81,6 +72,11 @@ export function ConnectionsPage() {
           Manage your external account connections.
         </p>
       </div>
+      {error && (
+        <p className="text-sm text-destructive" data-testid="connections-error">
+          {error}
+        </p>
+      )}
       <div className="space-y-4">
         {providers.map((provider) => (
           <Card key={provider.id}>
