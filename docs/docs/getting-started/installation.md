@@ -4,6 +4,7 @@
 
 - Python 3.12+ (3.11+ supported)
 - PostgreSQL 14+
+- Redis
 - Node.js 18+ or [Bun](https://bun.sh/)
 - [uv](https://docs.astral.sh/uv/) -- fast Python package manager
 
@@ -74,7 +75,7 @@ If you prefer Docker:
 docker compose up --build
 ```
 
-This starts the backend (port 8000), frontend (port 3000), and PostgreSQL.
+This starts five services: backend API (port 8000), frontend (port 3000), MCP server (port 8100), PostgreSQL, and Redis.
 
 ## Verify the installation
 

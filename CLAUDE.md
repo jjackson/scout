@@ -6,7 +6,7 @@ Self-hosted data agent platform for AI-powered database querying.
 
 ```bash
 # Backend
-docker compose up platform-db redis      # Start dependencies
+docker compose up platform-db redis mcp-server  # Start dependencies
 uv run python manage.py runserver         # Django dev server (or use uvicorn below)
 uv run uvicorn config.asgi:application --reload --port 8000  # ASGI dev server
 uv run python manage.py migrate           # Run migrations
@@ -16,7 +16,7 @@ cd frontend && bun install && bun dev     # Dev server on :5173
 cd frontend && bun run build              # Production build (runs tsc first)
 
 # Full stack via Docker
-docker compose up                         # All services (api :8000, frontend :3000)
+docker compose up                         # All services (api :8000, frontend :3000, mcp :8100)
 
 # Tests
 uv run pytest                             # All backend tests
@@ -34,6 +34,7 @@ uv run ruff format .                      # Python format
 - **Backend**: Django 5 + DRF in `config/` and `apps/` (ASGI via uvicorn)
 - **Frontend**: React 19 + Vite + Tailwind CSS 4 + TypeScript in `frontend/`
 - **AI**: LangGraph agent with langchain-anthropic, PostgreSQL checkpointer for conversation persistence
+- **MCP Server**: Standalone FastMCP server (`mcp_server/`) for tool-based data access (SQL execution, table metadata)
 - **Auth**: Session cookies (no JWT), CSRF token from `GET /api/auth/csrf/`
 - **DB encryption**: Project database credentials encrypted with Fernet (`DB_CREDENTIAL_KEY` env var)
 
@@ -44,6 +45,7 @@ uv run ruff format .                      # Python format
 | users | Custom User model, session auth, OAuth (Google/GitHub/CommCare) |
 | projects | Projects, DB connections (encrypted), memberships |
 | knowledge | KnowledgeEntry, table metadata, golden queries, eval runs |
+| agents | LangGraph agent graph, MCP client, tools, prompts, memory (checkpointer) |
 | chat | Streaming chat threads with LangGraph agent |
 | artifacts | Generated dashboards/charts with sandboxed React rendering |
 | recipes | Replayable analysis workflows with templated prompts |
@@ -62,6 +64,10 @@ Required (see `.env.example`):
 - `ANTHROPIC_API_KEY` - Claude API key for LangGraph agent
 - `DB_CREDENTIAL_KEY` - Fernet key for encrypting project DB credentials
 - `DJANGO_SECRET_KEY` - Django secret key
+
+Optional:
+- `MCP_SERVER_URL` - MCP server URL (default: `http://localhost:8100/mcp`)
+- `REDIS_URL` - Redis connection URL for caching and Celery
 
 ## Code style
 
