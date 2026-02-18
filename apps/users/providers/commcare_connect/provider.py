@@ -33,7 +33,7 @@ class CommCareConnectProvider(OAuth2Provider):
     oauth2_adapter_class = CommCareConnectOAuth2Adapter
 
     def get_default_scope(self) -> list[str]:
-        return []
+        return ["read"]
 
     def extract_uid(self, data: dict) -> str:
         return str(data["id"])
