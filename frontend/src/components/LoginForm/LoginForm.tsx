@@ -1,16 +1,28 @@
-import { useState, type FormEvent } from "react"
+import { useState, useEffect, type FormEvent } from "react"
 import { useAppStore } from "@/store/store"
+import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
+interface OAuthProvider {
+  id: string
+  name: string
+  login_url: string
+}
+
 export function LoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const [providers, setProviders] = useState<OAuthProvider[]>([])
   const authError = useAppStore((s) => s.authError)
   const login = useAppStore((s) => s.authActions.login)
+
+  useEffect(() => {
+    api.get<OAuthProvider[]>("/api/auth/providers/").then(setProviders).catch(() => {})
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -63,6 +75,35 @@ export function LoginForm() {
               {loading ? "Signing in..." : "Sign in"}
             </Button>
           </form>
+          {providers.length > 0 && (
+            <>
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">
+                    or continue with
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {providers.map((provider) => (
+                  <Button
+                    key={provider.id}
+                    variant="outline"
+                    className="w-full"
+                    asChild
+                    data-testid={`oauth-login-${provider.id}`}
+                  >
+                    <a href={`${provider.login_url}?next=/`}>
+                      {provider.name}
+                    </a>
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
