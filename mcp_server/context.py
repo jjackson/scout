@@ -1,12 +1,12 @@
-"""Project context for the MCP server.
+"""Context for the MCP server.
 
-Holds project configuration as an immutable snapshot. Loaded per-request
-from the project_id passed to each tool call.
+Holds configuration as an immutable snapshot. Supports both legacy project-based
+context and new tenant-based context.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -38,6 +38,19 @@ class ProjectContext:
             readonly_role=project.readonly_role or "",
             connection_params=project.get_connection_params(),
         )
+
+
+@dataclass(frozen=True)
+class TenantContext:
+    """Immutable snapshot of tenant context for tool handlers."""
+
+    tenant_id: str
+    user_id: str
+    provider: str
+    schema_name: str
+    oauth_tokens: dict[str, str] = field(default_factory=dict)
+    max_rows_per_query: int = 500
+    max_query_timeout_seconds: int = 30
 
 
 async def load_project_context(project_id: str) -> ProjectContext:

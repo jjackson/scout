@@ -286,7 +286,7 @@ class TestToolHandlers:
         assert result["success"] is True
         assert len(result["data"]["tables"]) == 1
         assert result["data"]["tables"][0]["name"] == "users"
-        assert result["project_id"] == project_context.project_id
+        assert result["tenant_id"] == project_context.project_id
         assert result["schema"] == "public"
         assert "timing_ms" in result
 

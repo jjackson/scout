@@ -5,7 +5,7 @@ Database access layer for the Scout agent, exposed via the Model Context
 Protocol. Runs as a standalone process but uses Django ORM to load project
 configuration and database credentials.
 
-Every tool requires a project_id parameter identifying which project's
+Every tool requires a tenant_id parameter identifying which tenant's
 database to operate on. All responses use a consistent envelope format.
 
 Usage:
@@ -43,18 +43,18 @@ mcp = FastMCP("scout")
 
 
 @mcp.tool()
-async def list_tables(project_id: str) -> dict:
-    """List all tables and views in the project database.
+async def list_tables(tenant_id: str) -> dict:
+    """List all tables and views in the tenant's database schema.
 
     Returns table names, types (table/view), approximate row counts,
-    and descriptions. Respects project-level table allow/exclude lists.
+    and descriptions.
 
     Args:
-        project_id: UUID of the Scout project to query.
+        tenant_id: The tenant identifier (e.g. CommCare domain name).
     """
-    async with tool_context("list_tables", project_id) as tc:
+    async with tool_context("list_tables", tenant_id) as tc:
         try:
-            ctx = await load_project_context(project_id)
+            ctx = await load_project_context(tenant_id)
         except ValueError as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -64,7 +64,7 @@ async def list_tables(project_id: str) -> dict:
         tables = await metadata.list_tables(ctx.project_id)
         tc["result"] = success_response(
             {"tables": tables},
-            project_id=ctx.project_id,
+            tenant_id=tenant_id,
             schema=ctx.db_schema,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -72,7 +72,7 @@ async def list_tables(project_id: str) -> dict:
 
 
 @mcp.tool()
-async def describe_table(project_id: str, table_name: str) -> dict:
+async def describe_table(tenant_id: str, table_name: str) -> dict:
     """Get detailed metadata for a specific table.
 
     Returns columns (name, type, nullable, default), primary keys,
@@ -80,12 +80,12 @@ async def describe_table(project_id: str, table_name: str) -> dict:
     if available.
 
     Args:
-        project_id: UUID of the Scout project to query.
+        tenant_id: The tenant identifier (e.g. CommCare domain name).
         table_name: Name of the table to describe (case-insensitive).
     """
-    async with tool_context("describe_table", project_id, table_name=table_name) as tc:
+    async with tool_context("describe_table", tenant_id, table_name=table_name) as tc:
         try:
-            ctx = await load_project_context(project_id)
+            ctx = await load_project_context(tenant_id)
         except ValueError as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -104,7 +104,7 @@ async def describe_table(project_id: str, table_name: str) -> dict:
 
         tc["result"] = success_response(
             table,
-            project_id=ctx.project_id,
+            tenant_id=tenant_id,
             schema=ctx.db_schema,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -112,19 +112,18 @@ async def describe_table(project_id: str, table_name: str) -> dict:
 
 
 @mcp.tool()
-async def get_metadata(project_id: str) -> dict:
-    """Get a complete metadata snapshot for the project database.
+async def get_metadata(tenant_id: str) -> dict:
+    """Get a complete metadata snapshot for the tenant's database.
 
     Returns all tables, columns, relationships, and semantic layer
-    information in a single call. Useful for building comprehensive
-    understanding of available data.
+    information in a single call.
 
     Args:
-        project_id: UUID of the Scout project to query.
+        tenant_id: The tenant identifier (e.g. CommCare domain name).
     """
-    async with tool_context("get_metadata", project_id) as tc:
+    async with tool_context("get_metadata", tenant_id) as tc:
         try:
-            ctx = await load_project_context(project_id)
+            ctx = await load_project_context(tenant_id)
         except ValueError as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -134,7 +133,7 @@ async def get_metadata(project_id: str) -> dict:
         snapshot = await metadata.get_metadata(ctx.project_id)
         tc["result"] = success_response(
             snapshot,
-            project_id=ctx.project_id,
+            tenant_id=tenant_id,
             schema=ctx.db_schema,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -142,19 +141,19 @@ async def get_metadata(project_id: str) -> dict:
 
 
 @mcp.tool()
-async def query(project_id: str, sql: str) -> dict:
-    """Execute a read-only SQL query against the project database.
+async def query(tenant_id: str, sql: str) -> dict:
+    """Execute a read-only SQL query against the tenant's database.
 
     The query is validated for safety (SELECT only, no dangerous functions),
     row limits are enforced, and execution uses a read-only database role.
 
     Args:
-        project_id: UUID of the Scout project to query.
+        tenant_id: The tenant identifier (e.g. CommCare domain name).
         sql: A SQL SELECT query to execute.
     """
-    async with tool_context("query", project_id, sql=sql) as tc:
+    async with tool_context("query", tenant_id, sql=sql) as tc:
         try:
-            ctx = await load_project_context(project_id)
+            ctx = await load_project_context(tenant_id)
         except ValueError as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -170,9 +169,7 @@ async def query(project_id: str, sql: str) -> dict:
 
         warnings = []
         if result.get("truncated"):
-            warnings.append(
-                f"Results truncated to {ctx.max_rows_per_query} rows"
-            )
+            warnings.append(f"Results truncated to {ctx.max_rows_per_query} rows")
 
         tc["result"] = success_response(
             {
@@ -183,12 +180,27 @@ async def query(project_id: str, sql: str) -> dict:
                 "sql_executed": result.get("sql_executed", ""),
                 "tables_accessed": result.get("tables_accessed", []),
             },
-            project_id=ctx.project_id,
+            tenant_id=tenant_id,
             schema=ctx.db_schema,
             timing_ms=tc["timer"].elapsed_ms,
             warnings=warnings or None,
         )
         return tc["result"]
+
+
+@mcp.tool()
+async def run_materialization(tenant_id: str, pipeline: str = "commcare_sync") -> dict:
+    """Materialize data from CommCare into the tenant's schema.
+
+    Loads case data from the CommCare API and writes it to the tenant's
+    schema in the managed database. Creates the schema if it doesn't exist.
+
+    Args:
+        tenant_id: The tenant identifier (CommCare domain name).
+        pipeline: Pipeline to run (default: commcare_sync).
+    """
+    # Implementation in Task 8
+    return error_response("NOT_IMPLEMENTED", "Materialization not yet implemented")
 
 
 # --- Server setup ---
