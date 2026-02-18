@@ -173,6 +173,38 @@ PROVIDER_DISPLAY = {
 }
 
 
+@require_POST
+def disconnect_provider_view(request, provider_id):
+    """Disconnect a social account. Prevents removing the last login method."""
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    from django.db import transaction
+
+    with transaction.atomic():
+        account = SocialAccount.objects.select_for_update().filter(
+            user=request.user, provider=provider_id
+        ).first()
+        if not account:
+            return JsonResponse({"error": "Not connected"}, status=404)
+
+        # Guard: must keep at least one login method
+        has_password = request.user.has_usable_password()
+        other_socials = (
+            SocialAccount.objects.filter(user=request.user)
+            .exclude(provider=provider_id)
+            .exists()
+        )
+        if not has_password and not other_socials:
+            return JsonResponse(
+                {"error": "Cannot disconnect your only login method. Set a password first."},
+                status=400,
+            )
+
+        account.delete()
+    return JsonResponse({"status": "disconnected"})
+
+
 @require_GET
 def providers_view(request):
     """Return OAuth providers configured for this site, with connection status if authenticated."""

@@ -681,3 +681,51 @@ class TestProvidersEndpoint:
         providers = {p["id"]: p for p in resp.json()["providers"]}
         assert providers["google"]["connected"] is True  # social_account fixture is google
         assert providers["github"]["connected"] is False
+
+
+# ============================================================================
+# 9. TestDisconnectProvider
+# ============================================================================
+
+
+@pytest.mark.django_db
+class TestDisconnectProvider:
+    """Tests for POST /api/auth/providers/<provider>/disconnect/."""
+
+    def test_disconnect_requires_auth(self, client):
+        resp = client.post("/api/auth/providers/google/disconnect/")
+        assert resp.status_code == 401
+
+    def test_disconnect_existing_provider(self, client, user, social_account):
+        """User with password + social account can disconnect the social account."""
+        client.force_login(user)
+        resp = client.post("/api/auth/providers/google/disconnect/")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "disconnected"
+        assert not SocialAccount.objects.filter(user=user, provider="google").exists()
+
+    def test_disconnect_only_login_method_blocked(self, client, user, social_account):
+        """Cannot disconnect if it's the only login method (no password)."""
+        user.set_unusable_password()
+        user.save()
+        client.force_login(user)
+        resp = client.post("/api/auth/providers/google/disconnect/")
+        assert resp.status_code == 400
+        assert "only login method" in resp.json()["error"].lower()
+        # Social account should still exist
+        assert SocialAccount.objects.filter(user=user, provider="google").exists()
+
+    def test_disconnect_allowed_with_other_provider(self, client, user, social_account):
+        """Can disconnect one provider if another is still connected."""
+        user.set_unusable_password()
+        user.save()
+        # Add a second social account
+        SocialAccount.objects.create(user=user, provider="github", uid="gh_123")
+        client.force_login(user)
+        resp = client.post("/api/auth/providers/google/disconnect/")
+        assert resp.status_code == 200
+
+    def test_disconnect_nonexistent_returns_404(self, client, user):
+        client.force_login(user)
+        resp = client.post("/api/auth/providers/google/disconnect/")
+        assert resp.status_code == 404
