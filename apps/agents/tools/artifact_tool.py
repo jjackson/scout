@@ -12,9 +12,13 @@ The tools support:
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.tools import tool
+
+if TYPE_CHECKING:
+    from apps.projects.models import Project
+    from apps.users.models import User
 
 logger = logging.getLogger(__name__)
 
