@@ -27,8 +27,9 @@ def _get_commcare_token(user) -> str | None:
     token = (
         SocialToken.objects.filter(
             account__user=user,
-            account__provider="commcare",
+            account__provider__startswith="commcare",
         )
+        .exclude(account__provider__startswith="commcare_connect")
         .first()
     )
     return token.token if token else None
