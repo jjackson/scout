@@ -45,8 +45,8 @@ def run_commcare_sync(tenant_membership, access_token: str) -> dict:
         cursor = conn.cursor()
         schema_id = psql.Identifier(schema_name)
 
-        # Create cases table (replace if exists)
-        cursor.execute(psql.SQL("DROP TABLE IF EXISTS {}.cases").format(schema_id))
+        # Create cases table (replace if exists, CASCADE drops dependents)
+        cursor.execute(psql.SQL("DROP TABLE IF EXISTS {}.cases CASCADE").format(schema_id))
         cursor.execute(
             psql.SQL(
                 """
