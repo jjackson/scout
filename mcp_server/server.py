@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 
+from django.core.exceptions import ValidationError as _ValidationError
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server.context import load_tenant_context
@@ -106,7 +107,7 @@ async def list_tables(tenant_id: str) -> dict:
     async with tool_context("list_tables", tenant_id) as tc:
         try:
             ctx = await load_tenant_context(tenant_id)
-        except ValueError as e:
+        except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
 
@@ -133,7 +134,7 @@ async def describe_table(tenant_id: str, table_name: str) -> dict:
     async with tool_context("describe_table", tenant_id, table_name=table_name) as tc:
         try:
             ctx = await load_tenant_context(tenant_id)
-        except ValueError as e:
+        except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
 
@@ -165,7 +166,7 @@ async def get_metadata(tenant_id: str) -> dict:
     async with tool_context("get_metadata", tenant_id) as tc:
         try:
             ctx = await load_tenant_context(tenant_id)
-        except ValueError as e:
+        except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
 
@@ -199,7 +200,7 @@ async def query(tenant_id: str, sql: str) -> dict:
     async with tool_context("query", tenant_id, sql=sql) as tc:
         try:
             ctx = await load_tenant_context(tenant_id)
-        except ValueError as e:
+        except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
 
@@ -253,6 +254,13 @@ async def run_materialization(tenant_id: str, pipeline: str = "commcare_sync") -
             tm = await TenantMembership.objects.aget(tenant_id=tenant_id, provider="commcare")
         except TenantMembership.DoesNotExist:
             tc["result"] = error_response(NOT_FOUND, f"Tenant '{tenant_id}' not found")
+            return tc["result"]
+        except TenantMembership.MultipleObjectsReturned:
+            tc["result"] = error_response(
+                VALIDATION_ERROR,
+                f"Multiple memberships found for tenant '{tenant_id}'. "
+                f"Contact an administrator to resolve the duplicate.",
+            )
             return tc["result"]
 
         # Get OAuth token from the user's social account

@@ -23,6 +23,7 @@ The graph uses:
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -49,10 +50,87 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# MCP tools that require a context ID (tenant_id or project_id) injected from state
+MCP_TOOL_NAMES = frozenset({
+    "list_tables", "describe_table", "query", "get_metadata", "run_materialization",
+})
+
 
 # Configuration constants
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0
+
+
+def _llm_tool_schemas(tools: list, hidden_param: str) -> list:
+    """Build tool definitions for the LLM with a parameter hidden from the schema.
+
+    MCP tools require a context ID (tenant_id / project_id) but the LLM shouldn't
+    provide it — it's injected from state.  We give the LLM schemas that omit
+    that parameter so it can't hallucinate a wrong value.
+
+    Non-MCP tools are returned unchanged.
+    """
+    result: list = []
+    for tool in tools:
+        if tool.name not in MCP_TOOL_NAMES:
+            result.append(tool)
+            continue
+
+        schema = tool.get_input_schema().model_json_schema()
+        props = schema.get("properties", {})
+        if hidden_param not in props:
+            result.append(tool)
+            continue
+
+        # Build a trimmed schema dict for bind_tools
+        trimmed_props = {k: v for k, v in props.items() if k != hidden_param}
+        trimmed_required = [r for r in schema.get("required", []) if r != hidden_param]
+        result.append({
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": {
+                    "type": "object",
+                    "properties": trimmed_props,
+                    "required": trimmed_required,
+                },
+            },
+        })
+    return result
+
+
+def _make_injecting_tool_node(
+    base_tool_node: ToolNode,
+    inject_key: str,
+    state_field: str,
+) -> Any:
+    """Create a graph node that injects a state value into MCP tool call args.
+
+    Before the ToolNode executes, this node copies the last AI message and
+    injects ``state[state_field]`` as ``inject_key`` into every MCP tool call's
+    args. This ensures the MCP server always receives the correct context ID
+    regardless of what the LLM generated.
+    """
+
+    async def injecting_node(state: AgentState) -> dict[str, Any]:
+        messages = list(state["messages"])
+        last_msg = messages[-1]
+        inject_value = state.get(state_field, "")
+
+        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            modified_msg = copy.copy(last_msg)
+            modified_calls = []
+            for tc in last_msg.tool_calls:
+                if tc["name"] in MCP_TOOL_NAMES:
+                    tc = {**tc, "args": {**tc["args"], inject_key: inject_value}}
+                modified_calls.append(tc)
+            modified_msg.tool_calls = modified_calls
+            messages = messages[:-1] + [modified_msg]
+
+        return await base_tool_node.ainvoke({"messages": messages})
+
+    return injecting_node
 
 
 def build_agent_graph(
@@ -83,6 +161,16 @@ def build_agent_graph(
         tools = list(mcp_tools or [])
     logger.debug("Created %d tools for %s", len(tools), context_label)
 
+    # --- Determine context ID injection ---
+    # MCP tools require tenant_id or project_id; we inject it from state
+    # so the LLM doesn't need to (and can't hallucinate) the value.
+    if tenant_membership and not project:
+        inject_key = "tenant_id"
+        state_field = "tenant_id"
+    else:
+        inject_key = "project_id"
+        state_field = "project_id"
+
     # --- Build LLM with tools ---
     llm_model = project.llm_model if project else "claude-sonnet-4-5-20250929"
     llm = ChatAnthropic(
@@ -90,7 +178,9 @@ def build_agent_graph(
         max_tokens=DEFAULT_MAX_TOKENS,
         temperature=DEFAULT_TEMPERATURE,
     )
-    llm_with_tools = llm.bind_tools(tools)
+    # Give the LLM tool schemas without the context ID parameter
+    llm_tool_schemas = _llm_tool_schemas(tools, hidden_param=inject_key)
+    llm_with_tools = llm.bind_tools(llm_tool_schemas)
 
     # --- Build system prompt ---
     if tenant_membership and not project:
@@ -99,8 +189,9 @@ def build_agent_graph(
         system_prompt = _build_system_prompt(project)
     logger.debug("System prompt assembled: %d characters for %s", len(system_prompt), context_label)
 
-    # --- Create tool node ---
-    tool_node = ToolNode(tools)
+    # --- Create tool node with context ID injection ---
+    base_tool_node = ToolNode(tools)
+    tool_node = _make_injecting_tool_node(base_tool_node, inject_key, state_field)
 
     # --- Define graph nodes ---
 
@@ -298,12 +389,9 @@ def _build_system_prompt(project: "Project") -> str:
     sections.append(f"""
 ## Query Configuration
 
-- Project ID: {project.id}
 - Maximum rows per query: {project.max_rows_per_query}
 - Query timeout: {project.max_query_timeout_seconds} seconds
 - Schema: {project.db_schema}
-
-**Important:** When using the `query`, `list_tables`, `describe_table`, or `get_metadata` tools, always pass `project_id` = "{project.id}".
 
 When results are truncated, suggest adding filters or using aggregations to reduce the result size.
 """)
@@ -323,18 +411,12 @@ def _build_tenant_system_prompt(tenant_membership: "TenantMembership") -> str:
 
 ## Query Configuration
 
-- Tenant ID: {tenant_membership.tenant_id}
 - Maximum rows per query: 500
 - Query timeout: 30 seconds
-- Schema: {tenant_membership.tenant_id}
-
-**Important:** When using the `query`, `list_tables`, `describe_table`, or `get_metadata` tools, \
-always pass `tenant_id` = "{tenant_membership.tenant_id}".
 
 When results are truncated, suggest adding filters or using aggregations to reduce the result size.
 
-You can materialize data from CommCare using the `run_materialization` tool with \
-`tenant_id` = "{tenant_membership.tenant_id}".
+You can materialize data from CommCare using the `run_materialization` tool.
 """)
 
     return "\n".join(sections)
