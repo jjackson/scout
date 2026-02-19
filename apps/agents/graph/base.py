@@ -51,9 +51,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # MCP tools that require a context ID (tenant_id or project_id) injected from state
-MCP_TOOL_NAMES = frozenset({
-    "list_tables", "describe_table", "query", "get_metadata", "run_materialization",
-})
+MCP_TOOL_NAMES = frozenset(
+    {
+        "list_tables",
+        "describe_table",
+        "query",
+        "get_metadata",
+        "run_materialization",
+    }
+)
 
 
 # Configuration constants
@@ -87,18 +93,20 @@ def _llm_tool_schemas(tools: list, hidden_params: list[str]) -> list:
         # Build a trimmed schema dict for bind_tools
         trimmed_props = {k: v for k, v in props.items() if k not in to_hide}
         trimmed_required = [r for r in schema.get("required", []) if r not in to_hide]
-        result.append({
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description or "",
-                "parameters": {
-                    "type": "object",
-                    "properties": trimmed_props,
-                    "required": trimmed_required,
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": {
+                        "type": "object",
+                        "properties": trimmed_props,
+                        "required": trimmed_required,
+                    },
                 },
-            },
-        })
+            }
+        )
     return result
 
 
@@ -136,9 +144,9 @@ def _make_injecting_tool_node(
 
 
 def build_agent_graph(
-    project: "Project | None" = None,
-    user: "User | None" = None,
-    checkpointer: "BaseCheckpointSaver | None" = None,
+    project: Project,
+    user: User | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
     mcp_tools: list | None = None,
     oauth_tokens: dict | None = None,
     tenant_membership: "TenantMembership | None" = None,
@@ -152,7 +160,9 @@ def build_agent_graph(
     context_label = (
         f"tenant:{tenant_membership.tenant_id}"
         if tenant_membership
-        else f"project:{project.slug}" if project else "unknown"
+        else f"project:{project.slug}"
+        if project
+        else "unknown"
     )
     logger.info("Building agent graph for %s", context_label)
 
@@ -295,7 +305,7 @@ def build_agent_graph(
     return compiled
 
 
-def _build_tools(project: "Project", user: "User | None", mcp_tools: list) -> list:
+def _build_tools(project: Project, user: User | None, mcp_tools: list) -> list:
     """
     Build the tool list for the agent.
 
@@ -337,7 +347,7 @@ def _build_tools(project: "Project", user: "User | None", mcp_tools: list) -> li
     return tools
 
 
-def _build_system_prompt(project: "Project") -> str:
+def _build_system_prompt(project: Project) -> str:
     """
     Assemble the complete system prompt from multiple sources.
 
