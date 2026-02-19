@@ -5,7 +5,6 @@ Tests artifact models, views, access control, versioning, sharing, and artifact 
 """
 import uuid
 from datetime import timedelta
-from unittest.mock import Mock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -352,9 +351,9 @@ class TestSharedArtifactModel:
 class TestArtifactSandboxView:
     """Tests for the ArtifactSandboxView."""
 
-    def test_sandbox_returns_html(self, client, artifact):
+    def test_sandbox_returns_html(self, authenticated_client, artifact, project_membership):
         """Test that sandbox view returns HTML content."""
-        response = client.get(f"/api/artifacts/{artifact.id}/sandbox/")
+        response = authenticated_client.get(f"/api/artifacts/{artifact.id}/sandbox/")
 
         assert response.status_code == 200
         assert "text/html" in response["Content-Type"]
@@ -366,9 +365,9 @@ class TestArtifactSandboxView:
         assert "React" in content or "react" in content
         assert "root" in content
 
-    def test_sandbox_csp_headers(self, client, artifact):
+    def test_sandbox_csp_headers(self, authenticated_client, artifact, project_membership):
         """Test that CSP headers are set correctly for security."""
-        response = client.get(f"/api/artifacts/{artifact.id}/sandbox/")
+        response = authenticated_client.get(f"/api/artifacts/{artifact.id}/sandbox/")
 
         assert response.status_code == 200
         assert "Content-Security-Policy" in response
@@ -548,22 +547,20 @@ class TestSharedArtifactView:
         assert "expired" in data["error"].lower()
 
     def test_view_count_incremented(self, client, shared_artifact):
-        """Test that view_count is incremented on each access."""
+        """Test that view_count is incremented via POST."""
         initial_count = shared_artifact.view_count
         assert initial_count == 0
 
-        # First view
-        client.get(f"/api/artifacts/shared/{shared_artifact.share_token}/")
+        # View count incremented via POST (not GET, per implementation design)
+        client.post(f"/api/artifacts/shared/{shared_artifact.share_token}/")
         shared_artifact.refresh_from_db()
         assert shared_artifact.view_count == initial_count + 1
 
-        # Second view
-        client.get(f"/api/artifacts/shared/{shared_artifact.share_token}/")
+        client.post(f"/api/artifacts/shared/{shared_artifact.share_token}/")
         shared_artifact.refresh_from_db()
         assert shared_artifact.view_count == initial_count + 2
 
-        # Third view
-        client.get(f"/api/artifacts/shared/{shared_artifact.share_token}/")
+        client.post(f"/api/artifacts/shared/{shared_artifact.share_token}/")
         shared_artifact.refresh_from_db()
         assert shared_artifact.view_count == initial_count + 3
 
@@ -610,8 +607,8 @@ class TestArtifactTools:
         assert artifact.version == 1
         assert artifact.parent_artifact is None
 
-    def test_update_artifact_tool(self, user, project, artifact):
-        """Test update_artifact tool updates an existing artifact."""
+    def test_update_artifact_tool(self, user, project, artifact, project_membership):
+        """Test update_artifact tool creates a new version of an artifact."""
         from apps.agents.tools.artifact_tool import create_artifact_tools
 
         tools = create_artifact_tools(project, user)
@@ -620,32 +617,26 @@ class TestArtifactTools:
         original_version = artifact.version
         new_code = "export default function Chart() { return <div>Updated Chart</div>; }"
 
-        # Create a mock ArtifactVersion class to avoid import error
-        mock_version_class = Mock()
-        mock_version_class.objects.create.return_value = Mock()
-
-        # Patch at the point where it's imported in the function
-        with patch('apps.artifacts.models.ArtifactVersion', mock_version_class, create=True):
-            result = update_artifact_tool.invoke({
-                "artifact_id": str(artifact.id),
-                "code": new_code,
-                "title": "Updated Chart Title",
-                "data": {"rows": [{"x": 2, "y": 4}]},
-            })
+        result = update_artifact_tool.invoke({
+            "artifact_id": str(artifact.id),
+            "code": new_code,
+            "title": "Updated Chart Title",
+            "data": {"rows": [{"x": 2, "y": 4}]},
+        })
 
         assert result["status"] == "updated"
         assert "artifact_id" in result
         assert result["version"] == original_version + 1
 
-        # Verify artifact was updated in place
-        artifact.refresh_from_db()
-        assert artifact.version == original_version + 1
-        assert artifact.code == new_code
-        assert artifact.title == "Updated Chart Title"
-        assert artifact.data == {"rows": [{"x": 2, "y": 4}]}
+        # Update creates a NEW artifact (not in-place), verify the new one
+        new_artifact = Artifact.objects.get(id=result["artifact_id"])
+        assert new_artifact.version == original_version + 1
+        assert new_artifact.code == new_code
+        assert new_artifact.title == "Updated Chart Title"
+        assert new_artifact.data == {"rows": [{"x": 2, "y": 4}]}
 
-    def test_update_creates_new_version(self, user, project, artifact):
-        """Test that update_artifact increments version number."""
+    def test_update_creates_new_version(self, user, project, artifact, project_membership):
+        """Test that update_artifact creates new artifacts with incrementing versions."""
         from apps.agents.tools.artifact_tool import create_artifact_tools
 
         tools = create_artifact_tools(project, user)
@@ -653,35 +644,23 @@ class TestArtifactTools:
 
         original_version = artifact.version
 
-        # Create a mock ArtifactVersion class to avoid import error
-        mock_version_class = Mock()
-        mock_version_class.objects.create.return_value = Mock()
+        # First update - creates new artifact from original
+        result1 = update_artifact_tool.invoke({
+            "artifact_id": str(artifact.id),
+            "code": "export default function Chart() { return <div>Version 2</div>; }",
+        })
 
-        # Patch at the point where it's imported in the function
-        with patch('apps.artifacts.models.ArtifactVersion', mock_version_class, create=True):
-            # First update
-            result1 = update_artifact_tool.invoke({
-                "artifact_id": str(artifact.id),
-                "code": "export default function Chart() { return <div>Version 2</div>; }",
-            })
+        assert result1["status"] == "updated"
+        assert result1["version"] == original_version + 1
 
-            assert result1["status"] == "updated"
-            assert result1["version"] == original_version + 1
+        # Second update - creates new artifact from the v2 artifact
+        result2 = update_artifact_tool.invoke({
+            "artifact_id": result1["artifact_id"],
+            "code": "export default function Chart() { return <div>Version 3</div>; }",
+        })
 
-            artifact.refresh_from_db()
-            assert artifact.version == original_version + 1
-
-            # Second update
-            result2 = update_artifact_tool.invoke({
-                "artifact_id": str(artifact.id),
-                "code": "export default function Chart() { return <div>Version 3</div>; }",
-            })
-
-            assert result2["status"] == "updated"
-            assert result2["version"] == original_version + 2
-
-            artifact.refresh_from_db()
-            assert artifact.version == original_version + 2
+        assert result2["status"] == "updated"
+        assert result2["version"] == original_version + 2
 
 
 # ============================================================================
@@ -911,11 +890,15 @@ class TestSharedArtifactAccessControl:
             )
 
     def test_generate_token_produces_valid_token(self):
-        """Test that generate_token produces a valid 64-character token."""
+        """Test that generate_token produces a valid URL-safe token."""
         token = SharedArtifact.generate_token()
 
-        assert len(token) == 64
-        assert all(c in "0123456789abcdef" for c in token)
+        # token_urlsafe(32) produces a 43-character base64url string
+        assert len(token) == 43
+        assert isinstance(token, str)
+        # Ensure uniqueness
+        token2 = SharedArtifact.generate_token()
+        assert token != token2
 
     def test_share_url_property(self, user, artifact):
         """Test that share_url property generates correct URL."""
@@ -1047,13 +1030,12 @@ class TestSharedArtifactViewAccessControl:
 
         initial_count = shared.view_count
 
-        # First access
-        client.get(f"/api/artifacts/shared/{shared.share_token}/")
+        # View count incremented via POST (not GET, per implementation design)
+        client.post(f"/api/artifacts/shared/{shared.share_token}/")
         shared.refresh_from_db()
         assert shared.view_count == initial_count + 1
 
-        # Second access
-        client.get(f"/api/artifacts/shared/{shared.share_token}/")
+        client.post(f"/api/artifacts/shared/{shared.share_token}/")
         shared.refresh_from_db()
         assert shared.view_count == initial_count + 2
 

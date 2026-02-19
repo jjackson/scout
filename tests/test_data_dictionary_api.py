@@ -102,11 +102,12 @@ def api_client():
 
 
 @pytest.fixture
-def project(db, user):
+def project(db, user, db_connection):
     """Project with a pre-populated data dictionary."""
     p = Project.objects.create(
         name="Test Project",
         slug="test-project",
+        database_connection=db_connection,
         db_schema="public",
         data_dictionary=SAMPLE_DATA_DICTIONARY,
         created_by=user,
@@ -115,11 +116,12 @@ def project(db, user):
 
 
 @pytest.fixture
-def project_no_dict(db, user):
+def project_no_dict(db, user, db_connection):
     """Project with no data dictionary generated yet."""
     return Project.objects.create(
         name="Empty Project",
         slug="empty-project",
+        database_connection=db_connection,
         db_schema="public",
         created_by=user,
     )

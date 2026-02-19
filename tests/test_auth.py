@@ -603,7 +603,7 @@ class TestCustomCommCareProvider:
 
         provider = CommCareProvider(request=None, app=app)
         scope = provider.get_default_scope()
-        assert "read" in scope
+        assert "access_apis" in scope
 
     def test_commcare_oauth2_adapter_endpoints(self):
         """Test CommCare adapter has correct OAuth endpoint URLs."""

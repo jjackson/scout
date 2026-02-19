@@ -2185,7 +2185,12 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "factory-boy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
     { name = "pytest-django" },
+    { name = "ruff" },
     { name = "zensical" },
 ]
 
@@ -2229,7 +2234,12 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "factory-boy", specifier = ">=3.3" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pytest-cov", specifier = ">=4.1" },
     { name = "pytest-django", specifier = ">=4.11.1" },
+    { name = "ruff", specifier = ">=0.5" },
     { name = "zensical", specifier = ">=0.0.21" },
 ]
 
