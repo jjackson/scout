@@ -33,6 +33,12 @@ Scout is configured via environment variables, typically set in a `.env` file in
 |----------|---------|-------------|
 | `REDIS_URL` | (empty) | Redis connection URL. If set, Redis is used for caching. Otherwise, local memory cache is used. |
 
+### MCP Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_SERVER_URL` | `http://localhost:8100/mcp` | URL of the MCP server for tool-based data access. |
+
 ### Rate limiting
 
 | Variable | Default | Description |
@@ -47,6 +53,16 @@ Scout is configured via environment variables, typically set in a `.env` file in
 | `ANTHROPIC_API_KEY` | (empty) | Anthropic API key. Required for the agent to function. |
 
 The default LLM model (`claude-sonnet-4-5-20250929`) can be overridden per-project in the project settings.
+
+### Header-based authentication
+
+For deployments behind a reverse proxy that handles authentication (e.g., OAuth2 Proxy):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_USER_ID_HEADER` | (empty) | HTTP header containing the authenticated user ID. |
+| `AUTH_USER_EMAIL_HEADER` | (empty) | HTTP header containing the authenticated user email. |
+| `AUTH_USER_NAME_HEADER` | (empty) | HTTP header containing the authenticated user name. |
 
 ## Frontend environment
 

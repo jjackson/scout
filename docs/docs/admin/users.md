@@ -16,9 +16,10 @@ Scout supports OAuth login via django-allauth. Built-in providers include:
 
 - **Google** -- sign in with Google accounts.
 - **GitHub** -- sign in with GitHub accounts.
-- **Custom providers** -- the codebase includes an example CommCare OAuth provider.
+- **CommCare** -- sign in with CommCare HQ accounts.
+- **CommCare Connect** -- sign in with CommCare Connect accounts.
 
-OAuth credentials (client ID and secret) are configured via the Django admin at `/admin/socialaccount/socialapp/`.
+OAuth credentials (client ID and secret) are configured via the Django admin at `/admin/socialaccount/socialapp/`. OAuth tokens are encrypted at rest and can be refreshed proactively before expiry.
 
 When a user logs in via OAuth for the first time, a Django user is automatically created. If a user with the same email already exists, the social account is linked to the existing user.
 

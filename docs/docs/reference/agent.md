@@ -42,13 +42,26 @@ The agent maintains state across conversation turns:
 
 Message history is automatically pruned to keep the last 20 messages plus system messages. Orphaned tool messages (those whose parent AI message was pruned) are removed.
 
+## MCP integration
+
+The agent accesses project databases through a Model Context Protocol (MCP) server rather than connecting directly. The MCP server (`mcp_server/`) runs as a separate process and provides:
+
+- **SQL execution** with validation, LIMIT injection, and timeout enforcement
+- **Table metadata** and column discovery
+- **Response envelopes** with consistent error codes, timing data, and audit logging
+- **Thread safety** with connection pooling, circuit breaker, and timeout handling
+
+The backend communicates with the MCP server via `langchain-mcp-adapters`, which exposes MCP tools as LangChain tools that the LangGraph agent can call. The MCP server URL is configured via the `MCP_SERVER_URL` environment variable (default: `http://localhost:8100/mcp`).
+
+All MCP tools require a `project_id` parameter to scope data access to the correct project.
+
 ## Tools
 
-The agent has access to six tools, created dynamically based on project configuration.
+The agent has access to tools provided by the MCP server and local tools for artifact and knowledge management.
 
 ### execute_sql
 
-Execute SELECT queries against the project database.
+Execute SELECT queries against the project database (via MCP).
 
 **Parameters:**
 - `query` (string, required): SQL SELECT query to execute

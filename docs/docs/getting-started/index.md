@@ -6,6 +6,7 @@ This section walks you through installing Scout, creating your first project, an
 
 - Python 3.12+ (3.11+ supported)
 - PostgreSQL 14+
+- Redis
 - Node.js 18+ or [Bun](https://bun.sh/)
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - An [Anthropic API key](https://console.anthropic.com/)

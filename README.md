@@ -9,22 +9,26 @@ A self-hosted platform for deploying AI agents that can query project-specific P
 - **Self-Learning**: Agent learns from errors and applies corrections to future queries
 - **Rich Artifacts**: Interactive dashboards, charts, and reports via sandboxed React components
 - **Recipe System**: Save and replay successful analysis workflows
-- **Multi-Provider OAuth**: Supports Google, GitHub, and custom OAuth providers
+- **MCP Data Layer**: Model Context Protocol server for structured, secure data access
+- **Multi-Provider OAuth**: Supports Google, GitHub, CommCare, and CommCare Connect
 - **Streaming Chat**: Real-time streaming responses via Server-Sent Events
 
 ## Tech Stack
 
 - **Backend**: Django 5 (ASGI), LangGraph, LangChain, Anthropic Claude
-- **Frontend**: React, Vite, Tailwind CSS 4, Zustand, Vercel AI SDK v6
+- **MCP Server**: Model Context Protocol server for tool-based data access (SQL execution, metadata)
+- **Frontend**: React 19, Vite, Tailwind CSS 4, Zustand, Vercel AI SDK v6
 - **Database**: PostgreSQL with per-project connection pooling
-- **Auth**: Session cookies, django-allauth (Google, GitHub, custom OAuth)
+- **Cache/Queue**: Redis (caching, rate limiting, Celery broker)
+- **Auth**: Session cookies, django-allauth (Google, GitHub, CommCare, CommCare Connect)
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+ (recommended; 3.11+ supported)
-- PostgreSQL
+- PostgreSQL 14+
+- Redis
 - Node.js 18+ or Bun
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 
@@ -67,7 +71,7 @@ The frontend dev server runs on http://localhost:5173 and proxies `/api/*` to th
 docker compose up --build
 ```
 
-This starts the backend (port 8000), frontend (port 3000), and PostgreSQL.
+This starts five services: backend API (port 8000), frontend (port 3000), MCP server (port 8100), PostgreSQL, and Redis.
 
 ## Project Setup
 
@@ -87,20 +91,20 @@ This starts the backend (port 8000), frontend (port 3000), and PostgreSQL.
 +----------------------------v-------------------------------+
 |               Django Backend (ASGI / uvicorn)              |
 |  Streaming chat, Auth, Projects API, Artifacts API         |
-+----------------------------+-------------------------------+
-                             |
-+----------------------------v-------------------------------+
-|               LangGraph Agent Runtime                      |
-|  - Knowledge-grounded SQL generation                       |
-|  - Self-correction loop (up to 3 retries)                  |
-|  - Artifact creation (charts, dashboards, reports)         |
-|  - PostgreSQL checkpointer for conversation persistence    |
-+----------------------------+-------------------------------+
-                             |
-+----------------------------v-------------------------------+
++---------------+-------------------+------------------------+
+                |                   |
++---------------v------+  +--------v-------------------------+
+|  LangGraph Agent     |  |  MCP Server (:8100)              |
+|  - Self-correction   |  |  - SQL execution & validation    |
+|  - Artifact creation |  |  - Table metadata & discovery    |
+|  - PG checkpointer   |  |  - Response envelope & audit log |
++---------------+------+  +--------+-------------------------+
+                |                   |
++---------------v-------------------v------------------------+
 |          PostgreSQL (per-project isolation)                 |
 |  Encrypted credentials, read-only, schema-scoped           |
 +------------------------------------------------------------+
+                Redis (caching, rate limiting, Celery broker)
 ```
 
 ## Security

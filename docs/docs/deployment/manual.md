@@ -6,6 +6,7 @@ For environments where Docker is not available or not desired, you can run Scout
 
 - Python 3.12+
 - PostgreSQL 14+
+- Redis
 - Node.js 18+ or Bun
 - [uv](https://docs.astral.sh/uv/)
 - A reverse proxy (nginx, Caddy) for production
@@ -41,6 +42,17 @@ DJANGO_SETTINGS_MODULE=config.settings.production \
 
 For production, consider running uvicorn behind a process manager like systemd or supervisord.
 
+## MCP Server
+
+The MCP server runs as a separate process and provides tool-based data access (SQL execution, table metadata) to the LangGraph agent.
+
+```bash
+DJANGO_SETTINGS_MODULE=config.settings.production \
+  uv run python -m mcp_server
+```
+
+By default it listens on port 8100. Set `MCP_SERVER_URL` on the backend to point to the MCP server if it runs on a different host.
+
 ## Frontend
 
 ### Build the production bundle
@@ -60,6 +72,7 @@ Serve `frontend/dist/` with nginx, Caddy, or any static file server. Configure t
 1. Serve static files from `frontend/dist/` for the root path.
 2. Proxy `/api/*` and `/admin/*` requests to the uvicorn backend on port 8000.
 3. Handle TLS termination.
+4. The MCP server (port 8100) does not need external access — only the backend connects to it.
 
 ### Example nginx configuration
 

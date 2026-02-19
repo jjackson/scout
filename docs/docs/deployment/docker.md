@@ -1,6 +1,6 @@
 # Docker deployment
 
-The simplest way to deploy Scout is with Docker Compose, which starts the backend, frontend, and PostgreSQL together.
+The simplest way to deploy Scout is with Docker Compose, which starts all services together.
 
 ## Quick start
 
@@ -8,13 +8,15 @@ The simplest way to deploy Scout is with Docker Compose, which starts the backen
 docker compose up --build
 ```
 
-This starts three services:
+This starts five services:
 
 | Service | Port | Description |
 |---------|------|-------------|
-| Backend | 8000 | Django ASGI server via uvicorn |
-| Frontend | 3000 | React app (production build) |
+| Backend (api) | 8000 | Django ASGI server via uvicorn |
+| Frontend | 3000 | React app served via nginx |
+| MCP Server | 8100 | Model Context Protocol server for data access |
 | PostgreSQL | 5432 | Scout's internal database |
+| Redis | 6379 | Caching, rate limiting, and Celery broker |
 
 ## Configuration
 
@@ -44,4 +46,4 @@ The backend exposes a health check endpoint at `/health/` that returns `{"status
 - Set `CSRF_TRUSTED_ORIGINS` to your frontend's origin.
 - Use a strong, unique `DJANGO_SECRET_KEY`.
 - Consider placing a reverse proxy (nginx, Caddy) in front for TLS termination.
-- Set `REDIS_URL` to use Redis for caching instead of the default in-memory cache.
+- Set `MCP_SERVER_URL` if the MCP server runs on a different host (defaults to `http://localhost:8100/mcp`).

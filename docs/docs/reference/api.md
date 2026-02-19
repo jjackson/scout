@@ -74,6 +74,10 @@ Returns projects where the current user has a membership:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/chat/` | Send a message and receive a streaming response. |
+| GET | `/api/chat/threads/` | List the current user's chat threads. |
+| GET | `/api/chat/threads/<thread_id>/messages/` | Get messages for a thread. |
+| PUT | `/api/chat/threads/<thread_id>/share/` | Share a thread via token. |
+| GET | `/api/chat/threads/shared/<share_token>/` | View a shared thread (public). |
 
 ### Chat request
 
@@ -246,3 +250,5 @@ OAuth login is handled by django-allauth at `/accounts/`. Available providers de
 
 - `/accounts/google/login/` -- Google OAuth
 - `/accounts/github/login/` -- GitHub OAuth
+- `/accounts/commcare/login/` -- CommCare OAuth
+- `/accounts/commcare_connect/login/` -- CommCare Connect OAuth

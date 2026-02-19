@@ -14,8 +14,10 @@ import logging
 import time
 import uuid
 
+from allauth.socialaccount.models import SocialAccount, SocialApp
 from asgiref.sync import sync_to_async
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.sites.models import Site
 from django.core.cache import cache
 from django.http import JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
@@ -161,6 +163,92 @@ def logout_view(request):
     """Logout and clear session."""
     logout(request)
     return JsonResponse({"ok": True})
+
+
+PROVIDER_DISPLAY = {
+    "google": "Google",
+    "github": "GitHub",
+    "commcare": "CommCare",
+    "commcare_connect": "CommCare Connect",
+}
+
+
+@require_POST
+def disconnect_provider_view(request, provider_id):
+    """Disconnect a social account. Prevents removing the last login method."""
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    from django.db import transaction
+
+    with transaction.atomic():
+        # SocialAccount.provider may store provider_id (e.g. "commcare_prod")
+        # rather than the provider class id (e.g. "commcare"), so check both.
+        account = SocialAccount.objects.select_for_update().filter(
+            user=request.user, provider=provider_id
+        ).first()
+        if not account:
+            # Try matching via SocialApp.provider_id
+            app_provider_ids = list(
+                SocialApp.objects.filter(provider=provider_id).values_list(
+                    "provider_id", flat=True
+                )
+            )
+            if app_provider_ids:
+                account = SocialAccount.objects.select_for_update().filter(
+                    user=request.user, provider__in=app_provider_ids
+                ).first()
+        if not account:
+            return JsonResponse({"error": "Not connected"}, status=404)
+
+        # Guard: must keep at least one login method
+        has_password = request.user.has_usable_password()
+        other_socials = (
+            SocialAccount.objects.filter(user=request.user)
+            .exclude(provider=provider_id)
+            .exists()
+        )
+        if not has_password and not other_socials:
+            return JsonResponse(
+                {"error": "Cannot disconnect your only login method. Set a password first."},
+                status=400,
+            )
+
+        account.delete()
+    return JsonResponse({"status": "disconnected"})
+
+
+@require_GET
+def providers_view(request):
+    """Return OAuth providers configured for this site, with connection status if authenticated."""
+    current_site = Site.objects.get_current()
+    apps = SocialApp.objects.filter(sites=current_site).order_by("provider")
+
+    connected_providers = set()
+    if request.user.is_authenticated:
+        connected_providers = set(
+            SocialAccount.objects.filter(user=request.user).values_list(
+                "provider", flat=True
+            )
+        )
+
+    providers = []
+    for app in apps:
+        entry = {
+            "id": app.provider,
+            "name": PROVIDER_DISPLAY.get(app.provider, app.name),
+            "login_url": f"/accounts/{app.provider}/login/",
+        }
+        if request.user.is_authenticated:
+            # SocialAccount.provider stores the provider_id (e.g. "commcare_prod"),
+            # not the provider class id (e.g. "commcare"), so check both.
+            entry["connected"] = (
+                app.provider in connected_providers
+                or app.provider_id in connected_providers
+            )
+        providers.append(entry)
+
+    return JsonResponse({"providers": providers})
 
 
 # ---------------------------------------------------------------------------

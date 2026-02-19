@@ -67,6 +67,15 @@ Query execution is rate-limited per user at `MAX_QUERIES_PER_MINUTE` (default: 6
 - **Allowed hosts** -- `DJANGO_ALLOWED_HOSTS` restricts which host headers are accepted.
 - **Trusted origins** -- `CSRF_TRUSTED_ORIGINS` restricts which origins can make cross-origin requests.
 
+## MCP server security
+
+The MCP server acts as the data access layer between the agent and project databases. Security features include:
+
+- **Auth token handling** -- OAuth tokens passed through to data sources are scrubbed from audit logs.
+- **Error codes** -- Standardized error codes (e.g., `AUTH_TOKEN_EXPIRED`) allow the agent to respond appropriately to auth failures.
+- **Response envelopes** -- All MCP responses use a consistent envelope format with timing data and audit metadata.
+- **Circuit breaker** -- Repeated failures to a project database trigger a circuit breaker to prevent cascading timeouts.
+
 ## Schema name validation
 
 Database schema names are validated with a regex pattern (`^[a-zA-Z_][a-zA-Z0-9_]*$`) to prevent SQL injection through schema names.

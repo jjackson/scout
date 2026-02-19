@@ -3,6 +3,8 @@
 from allauth.socialaccount.providers.base import ProviderAccount
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
 
+from .views import CommCareConnectOAuth2Adapter
+
 
 class CommCareConnectAccount(ProviderAccount):
 
@@ -28,6 +30,7 @@ class CommCareConnectProvider(OAuth2Provider):
     id = "commcare_connect"
     name = "CommCare Connect"
     account_class = CommCareConnectAccount
+    oauth2_adapter_class = CommCareConnectOAuth2Adapter
 
     def get_default_scope(self) -> list[str]:
         return ["read"]
