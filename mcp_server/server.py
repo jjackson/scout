@@ -28,6 +28,7 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp_server.context import load_tenant_context
 from mcp_server.envelope import (
+    AUTH_TOKEN_EXPIRED,
     NOT_FOUND,
     VALIDATION_ERROR,
     error_response,
@@ -283,10 +284,18 @@ async def run_materialization(
         # Run materialization (sync, wrapped in sync_to_async)
         from asgiref.sync import sync_to_async
 
+        from mcp_server.loaders.commcare_cases import CommCareAuthError
         from mcp_server.services.materializer import run_commcare_sync
 
         try:
             result = await sync_to_async(run_commcare_sync)(tm, token_obj.token)
+        except CommCareAuthError as e:
+            logger.warning("CommCare auth failed for tenant %s: %s", tenant_id, e)
+            tc["result"] = error_response(
+                AUTH_TOKEN_EXPIRED,
+                str(e),
+            )
+            return tc["result"]
         except Exception as e:
             logger.exception("Materialization failed for tenant %s", tenant_id)
             tc["result"] = error_response(

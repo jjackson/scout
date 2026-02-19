@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 COMMCARE_API_BASE = "https://www.commcarehq.org"
 
 
+class CommCareAuthError(Exception):
+    """Raised when the CommCare API rejects the OAuth token (401/403)."""
+
+
 class CommCareCaseLoader:
     """Loads case records from CommCare HQ using the Case API v2.
 
@@ -38,6 +42,11 @@ class CommCareCaseLoader:
                 headers={"Authorization": f"Bearer {self.access_token}"},
                 timeout=60,
             )
+            if resp.status_code in (401, 403):
+                raise CommCareAuthError(
+                    f"CommCare returned {resp.status_code} — the OAuth token may be "
+                    f"expired or revoked. Please reconnect your CommCare account."
+                )
             resp.raise_for_status()
             data = resp.json()
             results.extend(data.get("cases", []))
