@@ -343,6 +343,54 @@ def _setup_django() -> None:
     django.setup()
 
 
+def _run_server(args: argparse.Namespace) -> None:
+    """Start the MCP server (called directly or as a reload target)."""
+    _configure_logging(args.verbose)
+    _setup_django()
+
+    logger.info("Starting Scout MCP server (transport=%s)", args.transport)
+
+    if args.transport == "streamable-http":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+
+    mcp.run(transport=args.transport)
+
+
+def _run_with_reload(args: argparse.Namespace) -> None:
+    """Run the server in a subprocess and restart it when files change."""
+    import subprocess
+
+    from watchfiles import watch
+
+    watch_dirs = ["mcp_server", "apps"]
+    cmd = [
+        sys.executable, "-m", "mcp_server",
+        "--transport", args.transport,
+        "--host", args.host,
+        "--port", str(args.port),
+    ]
+    if args.verbose:
+        cmd.append("--verbose")
+
+    _configure_logging(args.verbose)
+    logger.info("Watching %s for changes (reload enabled)", ", ".join(watch_dirs))
+
+    process = subprocess.Popen(cmd)
+    try:
+        for changes in watch(*watch_dirs, watch_filter=lambda _, path: path.endswith(".py")):
+            changed = [str(c[1]) for c in changes]
+            logger.info("Detected changes in %s — restarting", ", ".join(changed))
+            process.terminate()
+            process.wait()
+            process = subprocess.Popen(cmd)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        process.terminate()
+        process.wait()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scout MCP Server")
     parser.add_argument(
@@ -354,19 +402,17 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="HTTP host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8100, help="HTTP port (default: 8100)")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--reload", action="store_true",
+        help="Auto-reload on code changes (development only)",
+    )
 
     args = parser.parse_args()
 
-    _configure_logging(args.verbose)
-    _setup_django()
-
-    logger.info("Starting Scout MCP server (transport=%s)", args.transport)
-
-    if args.transport == "streamable-http":
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
-
-    mcp.run(transport=args.transport)
+    if args.reload:
+        _run_with_reload(args)
+    else:
+        _run_server(args)
 
 
 if __name__ == "__main__":
