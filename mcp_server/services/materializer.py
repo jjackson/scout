@@ -1,8 +1,9 @@
 """
 Simplified materializer for the vertical slice.
 
-Loads CommCare case data and writes it to raw tables in the tenant's schema.
-No DBT transforms — the raw table IS the queryable table for now.
+Loads CommCare case data via the Case API v2 and writes it to raw tables
+in the tenant's schema.  No DBT transforms — the raw table IS the
+queryable table for now.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def run_commcare_sync(tenant_membership, access_token: str) -> dict:
     tenant_schema = mgr.provision(tenant_membership)
     schema_name = tenant_schema.schema_name
 
-    # 2. Load cases from CommCare
+    # 2. Load cases from CommCare (v2 API)
     loader = CommCareCaseLoader(
         domain=tenant_membership.tenant_id,
         access_token=access_token,
@@ -52,39 +53,60 @@ def run_commcare_sync(tenant_membership, access_token: str) -> dict:
             CREATE TABLE {schema}.cases (
                 case_id TEXT PRIMARY KEY,
                 case_type TEXT,
+                case_name TEXT,
+                external_id TEXT,
                 owner_id TEXT,
                 date_opened TEXT,
-                date_modified TEXT,
+                last_modified TEXT,
+                server_last_modified TEXT,
+                indexed_on TEXT,
                 closed BOOLEAN DEFAULT FALSE,
-                properties JSONB DEFAULT '{{}}'::jsonb
+                date_closed TEXT,
+                properties JSONB DEFAULT '{{}}'::jsonb,
+                indices JSONB DEFAULT '{{}}'::jsonb
             )
         """
             ).format(schema=schema_id)
         )
 
         # Insert rows
+        insert_sql = psql.SQL(
+            """
+            INSERT INTO {schema}.cases
+                (case_id, case_type, case_name, external_id, owner_id,
+                 date_opened, last_modified, server_last_modified, indexed_on,
+                 closed, date_closed, properties, indices)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (case_id) DO UPDATE SET
+                case_name = EXCLUDED.case_name,
+                owner_id = EXCLUDED.owner_id,
+                last_modified = EXCLUDED.last_modified,
+                server_last_modified = EXCLUDED.server_last_modified,
+                indexed_on = EXCLUDED.indexed_on,
+                closed = EXCLUDED.closed,
+                date_closed = EXCLUDED.date_closed,
+                properties = EXCLUDED.properties,
+                indices = EXCLUDED.indices
+            """
+        ).format(schema=schema_id)
+
         for case in cases:
-            props = case.get("properties", {})
             cursor.execute(
-                psql.SQL(
-                    """
-                    INSERT INTO {schema}.cases
-                        (case_id, case_type, owner_id, date_opened, date_modified, closed, properties)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (case_id) DO UPDATE SET
-                        properties = EXCLUDED.properties,
-                        date_modified = EXCLUDED.date_modified,
-                        closed = EXCLUDED.closed
-                """
-                ).format(schema=schema_id),
+                insert_sql,
                 (
                     case.get("case_id"),
                     case.get("case_type", ""),
+                    case.get("case_name", ""),
+                    case.get("external_id", ""),
                     case.get("owner_id", ""),
                     case.get("date_opened", ""),
-                    case.get("date_modified", ""),
+                    case.get("last_modified", ""),
+                    case.get("server_last_modified", ""),
+                    case.get("indexed_on", ""),
                     case.get("closed", False),
-                    json.dumps(props),
+                    case.get("date_closed") or "",
+                    json.dumps(case.get("properties", {})),
+                    json.dumps(case.get("indices", {})),
                 ),
             )
 

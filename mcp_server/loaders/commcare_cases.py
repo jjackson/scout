@@ -1,4 +1,4 @@
-"""CommCare case loader — fetches case data from the CommCare HQ REST API."""
+"""CommCare case loader — fetches case data from the CommCare HQ Case API v2."""
 from __future__ import annotations
 
 import logging
@@ -11,18 +11,25 @@ COMMCARE_API_BASE = "https://www.commcarehq.org"
 
 
 class CommCareCaseLoader:
-    """Loads case records from CommCare HQ for a given domain."""
+    """Loads case records from CommCare HQ using the Case API v2.
 
-    def __init__(self, domain: str, access_token: str):
+    The v2 API uses cursor-based pagination and returns cases serialized with
+    fields like case_name, last_modified, indices, and properties.
+
+    See: https://commcare-hq.readthedocs.io/api/cases-v2.html
+    """
+
+    def __init__(self, domain: str, access_token: str, *, page_size: int = 1000):
         self.domain = domain
         self.access_token = access_token
-        self.base_url = f"{COMMCARE_API_BASE}/a/{domain}/api/v0.5/case/"
+        self.page_size = min(page_size, 5000)  # API max is 5000
+        self.base_url = f"{COMMCARE_API_BASE}/a/{domain}/api/case/v2/"
 
     def load(self) -> list[dict]:
-        """Fetch all cases from the CommCare API (paginated)."""
-        results = []
+        """Fetch all cases from the CommCare Case API v2 (cursor-paginated)."""
+        results: list[dict] = []
         url = self.base_url
-        params = {"format": "json", "limit": 100}
+        params = {"limit": self.page_size}
 
         while url:
             resp = requests.get(
@@ -33,15 +40,16 @@ class CommCareCaseLoader:
             )
             resp.raise_for_status()
             data = resp.json()
-            results.extend(data.get("objects", []))
+            results.extend(data.get("cases", []))
 
-            url = data.get("meta", {}).get("next")
-            params = {}  # next URL includes params
+            # Cursor pagination: follow the "next" URL if present
+            url = data.get("next")
+            params = {}  # next URL includes all params
 
             logger.info(
-                "Loaded %d/%d cases for domain %s",
+                "Loaded %d/%s cases for domain %s",
                 len(results),
-                data.get("meta", {}).get("total_count", "?"),
+                data.get("matching_records", "?"),
                 self.domain,
             )
 
