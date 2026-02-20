@@ -29,7 +29,6 @@ from apps.agents.mcp_client import get_mcp_tools, get_user_oauth_tokens
 from apps.agents.memory.checkpointer import get_database_url
 from apps.chat.models import Thread
 from apps.chat.stream import langgraph_to_ui_stream
-from apps.projects.models import ProjectMembership
 
 logger = logging.getLogger(__name__)
 
@@ -264,35 +263,16 @@ def _get_user_if_authenticated(request):
 
 
 @sync_to_async
-def _get_membership(user, project_id):
-    """Load project membership in a sync context."""
-    try:
-        return ProjectMembership.objects.select_related("project").get(
-            user=user, project_id=project_id
-        )
-    except ProjectMembership.DoesNotExist:
-        return None
-
-
-@sync_to_async
-def _upsert_thread(thread_id, project_id, user, title, *, tenant_membership=None):
+def _upsert_thread(thread_id, user, title, *, tenant_membership):
     """Create or update a Thread record.
 
     auto_now on updated_at handles the timestamp on every save, so we only
-    need to pass project/user in defaults and title in create_defaults.
+    need to pass tenant_membership/user in defaults and title in create_defaults.
     """
-    defaults = {"user": user}
-    create_defaults = {"user": user, "title": title[:200]}
-    if project_id:
-        defaults["project_id"] = project_id
-        create_defaults["project_id"] = project_id
-    if tenant_membership:
-        defaults["tenant_membership"] = tenant_membership
-        create_defaults["tenant_membership"] = tenant_membership
     Thread.objects.update_or_create(
         id=thread_id,
-        defaults=defaults,
-        create_defaults=create_defaults,
+        defaults={"user": user, "tenant_membership": tenant_membership},
+        create_defaults={"user": user, "title": title[:200], "tenant_membership": tenant_membership},
     )
 
 
@@ -309,7 +289,7 @@ def _get_thread(thread_id, user):
 def _get_public_thread(share_token):
     """Load a public thread by share token."""
     try:
-        return Thread.objects.select_related("project", "user").get(
+        return Thread.objects.select_related("user").get(
             share_token=share_token, is_public=True
         )
     except Thread.DoesNotExist:
@@ -352,13 +332,9 @@ def _get_thread_artifacts(thread_id):
 
 
 @sync_to_async
-def _list_threads(user, *, project_id=None, tenant_membership_id=None):
-    """Return recent threads for a project or tenant/user."""
-    qs = Thread.objects.filter(user=user)
-    if project_id:
-        qs = qs.filter(project_id=project_id)
-    elif tenant_membership_id:
-        qs = qs.filter(tenant_membership_id=tenant_membership_id)
+def _list_threads(user, *, tenant_membership_id):
+    """Return recent threads for a tenant/user."""
+    qs = Thread.objects.filter(user=user, tenant_membership_id=tenant_membership_id)
     qs = qs.order_by("-updated_at")[:50]
     return [
         {
@@ -439,7 +415,7 @@ async def chat_view(request):
     # Record thread metadata (fire-and-forget on error)
     try:
         await _upsert_thread(
-            thread_id, None, user, user_content,
+            thread_id, user, user_content,
             tenant_membership=tenant_membership,
         )
     except Exception:
@@ -580,9 +556,9 @@ def _langchain_messages_to_ui(lc_messages) -> list[dict]:
 
 async def thread_list_view(request):
     """
-    GET /api/chat/threads/?project_id=X or ?tenant_id=X
+    GET /api/chat/threads/?tenant_id=X
 
-    Returns recent threads for the authenticated user in a project or tenant.
+    Returns recent threads for the authenticated user in a tenant.
     """
     if request.method != "GET":
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -591,25 +567,18 @@ async def thread_list_view(request):
     if user is None:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    project_id = request.GET.get("project_id")
     tenant_id = request.GET.get("tenant_id")
+    if not tenant_id:
+        return JsonResponse({"error": "tenant_id is required"}, status=400)
 
-    if project_id:
-        membership = await _get_membership(user, project_id)
-        if membership is None:
-            return JsonResponse({"error": "Project not found or access denied"}, status=403)
-        threads = await _list_threads(user, project_id=project_id)
-    elif tenant_id:
-        from apps.users.models import TenantMembership
+    from apps.users.models import TenantMembership
 
-        try:
-            await TenantMembership.objects.aget(id=tenant_id, user=user)
-        except TenantMembership.DoesNotExist:
-            return JsonResponse({"error": "Tenant not found or access denied"}, status=403)
-        threads = await _list_threads(user, tenant_membership_id=tenant_id)
-    else:
-        return JsonResponse({"error": "project_id or tenant_id is required"}, status=400)
+    try:
+        await TenantMembership.objects.aget(id=tenant_id, user=user)
+    except TenantMembership.DoesNotExist:
+        return JsonResponse({"error": "Tenant not found or access denied"}, status=403)
 
+    threads = await _list_threads(user, tenant_membership_id=tenant_id)
     return JsonResponse(threads, safe=False)
 
 
