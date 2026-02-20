@@ -8,6 +8,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.chat.views import public_thread_view
+from apps.projects.api.views import RefreshSchemaView
 from apps.projects.views import health_check
 from apps.recipes.api.views import PublicRecipeRunView
 
@@ -18,6 +19,10 @@ urlpatterns = [
     path("api/chat/", include("apps.chat.urls")),
     path("api/auth/", include("apps.chat.auth_urls")),
     path("api/artifacts/", include("apps.artifacts.urls")),
+    path("api/knowledge/", include("apps.knowledge.urls")),
+    path("api/recipes/", include("apps.recipes.urls")),
+    path("api/data-dictionary/", include("apps.projects.api.urls")),
+    path("api/refresh-schema/", RefreshSchemaView.as_view(), name="refresh_schema"),
     # Public share links (no auth required)
     path(
         "api/recipes/runs/shared/<str:share_token>/",

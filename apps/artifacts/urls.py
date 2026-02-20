@@ -9,7 +9,9 @@ from django.urls import path
 from .api.views import CreateShareView, ListSharesView, RevokeShareView
 from .views import (
     ArtifactDataView,
+    ArtifactDetailView,
     ArtifactExportView,
+    ArtifactListView,
     ArtifactQueryDataView,
     ArtifactSandboxView,
     SharedArtifactView,
@@ -18,6 +20,14 @@ from .views import (
 app_name = "artifacts"
 
 urlpatterns = [
+    # List artifacts for the active workspace
+    # GET /api/artifacts/
+    path("", ArtifactListView.as_view(), name="list"),
+    # Update or delete a specific artifact
+    # PATCH /api/artifacts/<uuid>/
+    # DELETE /api/artifacts/<uuid>/
+    path("<uuid:artifact_id>/", ArtifactDetailView.as_view(), name="detail"),
+
     # Sandbox view - serves the HTML template for rendering artifacts in an iframe
     # Full URL: /api/artifacts/<uuid>/sandbox/
     path(

@@ -871,6 +871,98 @@ class SharedArtifactView(View):
         )
 
 
+class ArtifactListView(View):
+    """
+    GET /api/artifacts/ - List artifacts for the active workspace.
+    """
+
+    def get(self, request: HttpRequest) -> JsonResponse:
+        if not request.user.is_authenticated:
+            return JsonResponse({"error": "Authentication required"}, status=401)
+
+        from apps.projects.models import TenantWorkspace
+        from apps.users.models import TenantMembership
+
+        membership = TenantMembership.objects.filter(user=request.user).order_by("-last_selected_at").first()
+        if not membership:
+            return JsonResponse({"results": []})
+
+        workspace, _ = TenantWorkspace.objects.get_or_create(
+            tenant_id=membership.tenant_id,
+            defaults={"tenant_name": membership.tenant_name},
+        )
+
+        from django.db.models import Q
+
+        search = request.GET.get("search", "").strip()
+        queryset = Artifact.objects.filter(workspace=workspace)
+        if search:
+            queryset = queryset.filter(Q(title__icontains=search) | Q(description__icontains=search))
+
+        results = [
+            {
+                "id": str(a.id),
+                "title": a.title,
+                "description": a.description,
+                "artifact_type": a.artifact_type,
+                "version": a.version,
+                "has_live_queries": bool(a.source_queries),
+                "created_at": a.created_at.isoformat(),
+                "updated_at": a.updated_at.isoformat(),
+            }
+            for a in queryset
+        ]
+        return JsonResponse({"results": results})
+
+
+class ArtifactDetailView(View):
+    """
+    PATCH /api/artifacts/<artifact_id>/ - Update title/description.
+    DELETE /api/artifacts/<artifact_id>/ - Delete artifact.
+    """
+
+    def _get_artifact_with_access(self, request: HttpRequest, artifact_id: str):
+        artifact = get_object_or_404(Artifact, pk=artifact_id)
+        if not request.user.is_authenticated:
+            return None, JsonResponse({"error": "Authentication required"}, status=401)
+        if not request.user.is_superuser and artifact.workspace_id:
+            from apps.users.models import TenantMembership
+
+            has_access = TenantMembership.objects.filter(
+                user=request.user, tenant_id=artifact.workspace.tenant_id
+            ).exists()
+            if not has_access:
+                return None, JsonResponse({"error": "Access denied"}, status=403)
+        return artifact, None
+
+    def patch(self, request: HttpRequest, artifact_id: str) -> JsonResponse:
+        artifact, err = self._get_artifact_with_access(request, artifact_id)
+        if err:
+            return err
+        try:
+            data = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+        update_fields = []
+        if "title" in data:
+            artifact.title = data["title"]
+            update_fields.append("title")
+        if "description" in data:
+            artifact.description = data["description"]
+            update_fields.append("description")
+        if update_fields:
+            update_fields.append("updated_at")
+            artifact.save(update_fields=update_fields)
+        return JsonResponse({"id": str(artifact.id), "title": artifact.title, "description": artifact.description})
+
+    def delete(self, request: HttpRequest, artifact_id: str) -> HttpResponse:
+        artifact, err = self._get_artifact_with_access(request, artifact_id)
+        if err:
+            return err
+        artifact.delete()
+        return HttpResponse(status=204)
+
+
 class ArtifactExportView(View):
     """
     Export artifacts to various formats (HTML, PNG, PDF).
