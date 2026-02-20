@@ -117,12 +117,21 @@ def me_view(request):
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Not authenticated"}, status=401)
     user = request.user
+
+    from apps.users.models import TenantMembership
+
+    onboarding_complete = TenantMembership.objects.filter(
+        user=user,
+        credential__isnull=False,
+    ).exists()
+
     return JsonResponse(
         {
             "id": str(user.id),
             "email": user.email,
             "name": user.get_full_name(),
             "is_staff": user.is_staff,
+            "onboarding_complete": onboarding_complete,
         }
     )
 

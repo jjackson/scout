@@ -767,3 +767,31 @@ class TestSignup:
             content_type="application/json",
         )
         assert response.status_code == 400
+
+
+from apps.users.models import TenantMembership, TenantCredential
+
+
+class TestMeOnboardingComplete:
+    def test_false_with_no_memberships(self, client, db):
+        user = User.objects.create_user(email="u@example.com", password="pass")
+        client.force_login(user)
+        resp = client.get("/api/auth/me/")
+        assert resp.status_code == 200
+        assert resp.json()["onboarding_complete"] is False
+
+    def test_true_with_membership_and_credential(self, client, db):
+        user = User.objects.create_user(email="u2@example.com", password="pass")
+        tm = TenantMembership.objects.create(
+            user=user,
+            provider="commcare",
+            tenant_id="d1",
+            tenant_name="D1",
+        )
+        TenantCredential.objects.create(
+            tenant_membership=tm,
+            credential_type=TenantCredential.OAUTH,
+        )
+        client.force_login(user)
+        resp = client.get("/api/auth/me/")
+        assert resp.json()["onboarding_complete"] is True
