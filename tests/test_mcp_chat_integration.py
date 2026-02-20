@@ -27,82 +27,10 @@ from apps.agents.graph.nodes import (
     diagnose_and_retry_node,
 )
 from apps.chat.stream import _sse, _tool_content_to_str, langgraph_to_ui_stream
-from apps.projects.models import (
-    DatabaseConnection,
-    Project,
-    ProjectMembership,
-    ProjectRole,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def project(db, user):
-    """Create an active project with a database connection."""
-    conn = DatabaseConnection(
-        name="Test DB",
-        db_host="localhost",
-        db_port=5432,
-        db_name="testdb",
-        created_by=user,
-    )
-    conn.db_user = "testuser"
-    conn.db_password = "testpass"
-    conn.save()
-
-    return Project.objects.create(
-        name="Test Project",
-        slug="test-project",
-        database_connection=conn,
-        is_active=True,
-        created_by=user,
-    )
-
-
-@pytest.fixture
-def membership(user, project):
-    """Create a project membership for the test user."""
-    return ProjectMembership.objects.create(
-        user=user,
-        project=project,
-        role=ProjectRole.ANALYST,
-    )
-
-
-@pytest.fixture
-def inactive_project(db, user):
-    """Create an inactive project."""
-    conn = DatabaseConnection(
-        name="Inactive DB",
-        db_host="localhost",
-        db_port=5432,
-        db_name="testdb",
-        created_by=user,
-    )
-    conn.db_user = "testuser"
-    conn.db_password = "testpass"
-    conn.save()
-
-    return Project.objects.create(
-        name="Inactive Project",
-        slug="inactive-project",
-        database_connection=conn,
-        is_active=False,
-        created_by=user,
-    )
-
-
-@pytest.fixture
-def inactive_membership(user, inactive_project):
-    """Membership for inactive project."""
-    return ProjectMembership.objects.create(
-        user=user,
-        project=inactive_project,
-        role=ProjectRole.ANALYST,
-    )
 
 
 @pytest.fixture
@@ -128,18 +56,18 @@ def auth_async_client(async_client, user):
     return async_client
 
 
-def _chat_body(project_id, message="What tables are available?", thread_id=None):
+def _chat_body(tenant_id, message="What tables are available?", thread_id=None):
     """Build a chat request body."""
     body = {
         "messages": [{"role": "user", "content": message}],
-        "data": {"projectId": str(project_id)},
+        "data": {"tenantId": str(tenant_id)},
     }
     if thread_id:
         body["data"]["threadId"] = str(thread_id)
     return body
 
 
-def _chat_body_v6(project_id, message="What tables are available?"):
+def _chat_body_v6(tenant_id, message="What tables are available?"):
     """Build a chat request body using AI SDK v6 parts format."""
     return {
         "messages": [
@@ -148,7 +76,7 @@ def _chat_body_v6(project_id, message="What tables are available?"):
                 "parts": [{"type": "text", "text": message}],
             }
         ],
-        "data": {"projectId": str(project_id)},
+        "data": {"tenantId": str(tenant_id)},
     }
 
 
@@ -177,29 +105,29 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_unauthenticated_returns_401(self, async_client, project, membership):
+    async def test_unauthenticated_returns_401(self, async_client, tenant_membership):
         """Unauthenticated requests should return 401."""
         response = await async_client.post(
             "/api/chat/",
-            data=json.dumps(_chat_body(project.id)),
+            data=json.dumps(_chat_body(tenant_membership.id)),
             content_type="application/json",
         )
         assert response.status_code == 401
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_get_method_returns_405(self, auth_async_client, project, membership):
+    async def test_get_method_returns_405(self, auth_async_client, tenant_membership):
         """GET requests should return 405."""
         response = await auth_async_client.get("/api/chat/")
         assert response.status_code == 405
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_missing_messages_returns_400(self, auth_async_client, project, membership):
+    async def test_missing_messages_returns_400(self, auth_async_client, tenant_membership):
         """Missing messages field should return 400."""
         response = await auth_async_client.post(
             "/api/chat/",
-            data=json.dumps({"data": {"projectId": str(project.id)}}),
+            data=json.dumps({"data": {"tenantId": str(tenant_membership.id)}}),
             content_type="application/json",
         )
         assert response.status_code == 400
@@ -208,8 +136,8 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_missing_project_id_returns_400(self, auth_async_client, project, membership):
-        """Missing projectId should return 400."""
+    async def test_missing_tenant_id_returns_400(self, auth_async_client):
+        """Missing tenantId should return 400."""
         response = await auth_async_client.post(
             "/api/chat/",
             data=json.dumps({"messages": [{"content": "hello"}]}),
@@ -217,17 +145,17 @@ class TestChatEndpointValidation:
         )
         assert response.status_code == 400
         body = json.loads(response.content)
-        assert "projectId" in body["error"]
+        assert "tenantId" in body["error"]
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_empty_message_returns_400(self, auth_async_client, project, membership):
+    async def test_empty_message_returns_400(self, auth_async_client, tenant_membership):
         """Empty message content should return 400."""
         response = await auth_async_client.post(
             "/api/chat/",
             data=json.dumps({
                 "messages": [{"content": ""}],
-                "data": {"projectId": str(project.id)},
+                "data": {"tenantId": str(tenant_membership.id)},
             }),
             content_type="application/json",
         )
@@ -237,13 +165,13 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_whitespace_only_message_returns_400(self, auth_async_client, project, membership):
+    async def test_whitespace_only_message_returns_400(self, auth_async_client, tenant_membership):
         """Whitespace-only message should return 400."""
         response = await auth_async_client.post(
             "/api/chat/",
             data=json.dumps({
                 "messages": [{"content": "   \n\t  "}],
-                "data": {"projectId": str(project.id)},
+                "data": {"tenantId": str(tenant_membership.id)},
             }),
             content_type="application/json",
         )
@@ -251,12 +179,12 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_message_too_long_returns_400(self, auth_async_client, project, membership):
+    async def test_message_too_long_returns_400(self, auth_async_client, tenant_membership):
         """Message exceeding MAX_MESSAGE_LENGTH should return 400."""
         long_msg = "x" * 10_001
         response = await auth_async_client.post(
             "/api/chat/",
-            data=json.dumps(_chat_body(project.id, message=long_msg)),
+            data=json.dumps(_chat_body(tenant_membership.id, message=long_msg)),
             content_type="application/json",
         )
         assert response.status_code == 400
@@ -265,20 +193,21 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_non_member_returns_403(self, auth_async_client, project):
-        """User without project membership should get 403."""
-        # Note: no membership fixture
+    async def test_non_member_returns_403(self, auth_async_client):
+        """User without tenant membership should get 403."""
+        # No tenant_membership fixture — send a fake tenant ID
+        fake_tenant_id = str(uuid.uuid4())
         response = await auth_async_client.post(
             "/api/chat/",
-            data=json.dumps(_chat_body(project.id)),
+            data=json.dumps(_chat_body(fake_tenant_id)),
             content_type="application/json",
         )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_nonexistent_project_returns_403(self, auth_async_client):
-        """Non-existent project ID should return 403."""
+    async def test_nonexistent_tenant_id_returns_403(self, auth_async_client):
+        """Non-existent tenant ID should return 403."""
         fake_id = str(uuid.uuid4())
         response = await auth_async_client.post(
             "/api/chat/",
@@ -286,21 +215,6 @@ class TestChatEndpointValidation:
             content_type="application/json",
         )
         assert response.status_code == 403
-
-    @pytest.mark.asyncio
-    @pytest.mark.django_db(transaction=True)
-    async def test_inactive_project_returns_403(
-        self, auth_async_client, inactive_project, inactive_membership
-    ):
-        """Inactive project should return 403."""
-        response = await auth_async_client.post(
-            "/api/chat/",
-            data=json.dumps(_chat_body(inactive_project.id)),
-            content_type="application/json",
-        )
-        assert response.status_code == 403
-        body = json.loads(response.content)
-        assert "inactive" in body["error"].lower()
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
@@ -315,7 +229,7 @@ class TestChatEndpointValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_v6_parts_format_accepted(self, auth_async_client, project, membership):
+    async def test_v6_parts_format_accepted(self, auth_async_client, tenant_membership):
         """AI SDK v6 parts format should be accepted."""
         with patch("apps.chat.views.get_mcp_tools", new_callable=AsyncMock) as mock_mcp, \
              patch("apps.chat.views._ensure_checkpointer", new_callable=AsyncMock) as mock_cp, \
@@ -339,7 +253,7 @@ class TestChatEndpointValidation:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body_v6(project.id)),
+                data=json.dumps(_chat_body_v6(tenant_membership.id)),
                 content_type="application/json",
             )
             assert response.status_code == 200
@@ -355,7 +269,7 @@ class TestMCPToolLoading:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_mcp_tools_failure_returns_500(self, auth_async_client, project, membership):
+    async def test_mcp_tools_failure_returns_500(self, auth_async_client, tenant_membership):
         """When get_mcp_tools() raises, chat view should return 500."""
         with patch(
             "apps.chat.views.get_mcp_tools",
@@ -364,7 +278,7 @@ class TestMCPToolLoading:
         ):
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
             assert response.status_code == 500
@@ -375,7 +289,7 @@ class TestMCPToolLoading:
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
     async def test_mcp_tools_success_proceeds_to_agent(
-        self, auth_async_client, project, membership
+        self, auth_async_client, tenant_membership
     ):
         """When get_mcp_tools() succeeds, the agent should be built with those tools."""
         mock_tool = MagicMock()
@@ -402,7 +316,7 @@ class TestMCPToolLoading:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
             assert response.status_code == 200
@@ -422,14 +336,14 @@ class TestMCPToolLoading:
 class TestAgentGraphAssembly:
     """Test that build_agent_graph correctly incorporates MCP tools."""
 
-    def test_mcp_tools_included_in_tool_list(self, user, project):
+    def test_mcp_tools_included_in_tool_list(self, user, workspace):
         """MCP tools should be included alongside local tools."""
         from apps.agents.graph.base import _build_tools
 
         mock_mcp_tool = MagicMock()
         mock_mcp_tool.name = "query"
 
-        tools = _build_tools(project, user, [mock_mcp_tool])
+        tools = _build_tools(workspace, user, [mock_mcp_tool])
         tool_names = [t.name for t in tools]
 
         # MCP tool should be first
@@ -438,11 +352,11 @@ class TestAgentGraphAssembly:
         assert "save_learning" in tool_names
         assert "create_artifact" in tool_names
 
-    def test_empty_mcp_tools_only_local(self, user, project):
+    def test_empty_mcp_tools_only_local(self, user, workspace):
         """With empty MCP tools, only local tools should be present."""
         from apps.agents.graph.base import _build_tools
 
-        tools = _build_tools(project, user, [])
+        tools = _build_tools(workspace, user, [])
         tool_names = [t.name for t in tools]
 
         # Only local tools
@@ -452,7 +366,7 @@ class TestAgentGraphAssembly:
         assert "query" not in tool_names
         assert "list_tables" not in tool_names
 
-    def test_multiple_mcp_tools_preserved(self, user, project):
+    def test_multiple_mcp_tools_preserved(self, user, workspace):
         """Multiple MCP tools should all be included."""
         from apps.agents.graph.base import _build_tools
 
@@ -462,7 +376,7 @@ class TestAgentGraphAssembly:
             t.name = name
             mcp_tools.append(t)
 
-        tools = _build_tools(project, user, mcp_tools)
+        tools = _build_tools(workspace, user, mcp_tools)
         tool_names = [t.name for t in tools]
 
         for name in ["query", "list_tables", "describe_table", "get_metadata"]:
@@ -937,7 +851,7 @@ class TestEndToEndStreaming:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_full_text_response_stream(self, auth_async_client, project, membership):
+    async def test_full_text_response_stream(self, auth_async_client, tenant_membership):
         """Full path: chat request → text SSE stream."""
         with patch("apps.chat.views.get_mcp_tools", new_callable=AsyncMock) as mock_mcp, \
              patch("apps.chat.views._ensure_checkpointer", new_callable=AsyncMock) as mock_cp, \
@@ -960,7 +874,7 @@ class TestEndToEndStreaming:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
 
@@ -977,7 +891,7 @@ class TestEndToEndStreaming:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_full_tool_call_stream(self, auth_async_client, project, membership):
+    async def test_full_tool_call_stream(self, auth_async_client, tenant_membership):
         """Full path: chat request → tool call → tool result → text → SSE stream."""
         with patch("apps.chat.views.get_mcp_tools", new_callable=AsyncMock) as mock_mcp, \
              patch("apps.chat.views._ensure_checkpointer", new_callable=AsyncMock) as mock_cp, \
@@ -1017,7 +931,7 @@ class TestEndToEndStreaming:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
 
@@ -1031,7 +945,7 @@ class TestEndToEndStreaming:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_thread_created_on_chat(self, auth_async_client, project, membership):
+    async def test_thread_created_on_chat(self, auth_async_client, tenant_membership):
         """A Thread record should be created when chatting."""
         from apps.chat.models import Thread
 
@@ -1058,7 +972,7 @@ class TestEndToEndStreaming:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id, thread_id=thread_id)),
+                data=json.dumps(_chat_body(tenant_membership.id, thread_id=thread_id)),
                 content_type="application/json",
             )
 
@@ -1070,11 +984,11 @@ class TestEndToEndStreaming:
             # Verify thread was created
             thread = await Thread.objects.filter(id=thread_id).afirst()
             assert thread is not None
-            assert str(thread.project_id) == str(project.id)
+            assert str(thread.tenant_membership_id) == str(tenant_membership.id)
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_agent_build_failure_returns_500(self, auth_async_client, project, membership):
+    async def test_agent_build_failure_returns_500(self, auth_async_client, tenant_membership):
         """If agent build fails, should return 500."""
         with patch("apps.chat.views.get_mcp_tools", new_callable=AsyncMock) as mock_mcp, \
              patch("apps.chat.views._ensure_checkpointer", new_callable=AsyncMock) as mock_cp, \
@@ -1087,7 +1001,7 @@ class TestEndToEndStreaming:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
             assert response.status_code == 500
@@ -1096,7 +1010,7 @@ class TestEndToEndStreaming:
 
     @pytest.mark.asyncio
     @pytest.mark.django_db(transaction=True)
-    async def test_checkpointer_retry_on_failure(self, auth_async_client, project, membership):
+    async def test_checkpointer_retry_on_failure(self, auth_async_client, tenant_membership):
         """If first checkpointer fails, should retry with force_new=True."""
         call_count = 0
 
@@ -1129,7 +1043,7 @@ class TestEndToEndStreaming:
 
             response = await auth_async_client.post(
                 "/api/chat/",
-                data=json.dumps(_chat_body(project.id)),
+                data=json.dumps(_chat_body(tenant_membership.id)),
                 content_type="application/json",
             )
 

@@ -5,7 +5,7 @@ Tests cover:
 - Creating share links with different access levels
 - Listing share links for an artifact
 - Revoking share links
-- Permission checks (creator vs admin vs regular user)
+- Permission checks (creator vs other users)
 """
 import uuid
 from datetime import timedelta
@@ -17,7 +17,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.artifacts.models import AccessLevel, Artifact, ArtifactType, SharedArtifact
-from apps.projects.models import DatabaseConnection, Project, ProjectMembership, ProjectRole
+from apps.projects.models import TenantWorkspace
 from apps.users.models import User
 
 
@@ -32,57 +32,24 @@ class ArtifactShareAPITestCase(TestCase):
             email="creator@example.com",
             password="testpass123",
         )
-        cls.admin_user = User.objects.create_user(
-            email="admin@example.com",
+        cls.other_user = User.objects.create_user(
+            email="other@example.com",
             password="testpass123",
         )
         cls.regular_user = User.objects.create_user(
             email="regular@example.com",
             password="testpass123",
         )
-        cls.other_user = User.objects.create_user(
-            email="other@example.com",
-            password="testpass123",
+
+        # Create a tenant workspace
+        cls.workspace = TenantWorkspace.objects.create(
+            tenant_id="test-domain",
+            tenant_name="Test Domain",
         )
 
-        # Create a database connection and project
-        cls.db_conn = DatabaseConnection(
-            name="Test Connection",
-            db_host="localhost",
-            db_port=5432,
-            db_name="testdb",
-        )
-        cls.db_conn.db_user = "testuser"
-        cls.db_conn.db_password = "testpassword"
-        cls.db_conn.save()
-
-        cls.project = Project.objects.create(
-            name="Test Project",
-            slug="test-project",
-            database_connection=cls.db_conn,
-            db_schema="public",
-        )
-
-        # Create project memberships
-        ProjectMembership.objects.create(
-            user=cls.creator,
-            project=cls.project,
-            role=ProjectRole.ANALYST,
-        )
-        ProjectMembership.objects.create(
-            user=cls.admin_user,
-            project=cls.project,
-            role=ProjectRole.ADMIN,
-        )
-        ProjectMembership.objects.create(
-            user=cls.regular_user,
-            project=cls.project,
-            role=ProjectRole.VIEWER,
-        )
-
-        # Create an artifact
+        # Create an artifact (only creator can manage its shares)
         cls.artifact = Artifact.objects.create(
-            project=cls.project,
+            workspace=cls.workspace,
             created_by=cls.creator,
             title="Test Artifact",
             description="A test artifact",
@@ -111,18 +78,17 @@ class CreateShareViewTests(ArtifactShareAPITestCase):
         self.assertIn("share_url", response.data)
         self.assertEqual(response.data["access_level"], "public")
 
-    def test_create_share_as_admin(self):
-        """Project admin can create a share link."""
-        self.client.force_authenticate(user=self.admin_user)
+    def test_create_share_as_non_creator_forbidden(self):
+        """Non-creator users cannot create share links."""
+        self.client.force_authenticate(user=self.other_user)
 
         url = reverse("artifacts:create_share", kwargs={"artifact_id": self.artifact.id})
-        response = self.client.post(url, {"access_level": "project"})
+        response = self.client.post(url, {"access_level": "public"})
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["access_level"], "project")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_create_share_as_regular_user_forbidden(self):
-        """Regular project member cannot create share links."""
+        """Regular users who are not the creator cannot create share links."""
         self.client.force_authenticate(user=self.regular_user)
 
         url = reverse("artifacts:create_share", kwargs={"artifact_id": self.artifact.id})
@@ -189,14 +155,14 @@ class CreateShareViewTests(ArtifactShareAPITestCase):
         self.assertIn(self.other_user.email, response.data["allowed_user_emails"])
 
     def test_create_share_default_access_level(self):
-        """Default access level is 'project'."""
+        """Default access level is 'tenant'."""
         self.client.force_authenticate(user=self.creator)
 
         url = reverse("artifacts:create_share", kwargs={"artifact_id": self.artifact.id})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["access_level"], "project")
+        self.assertEqual(response.data["access_level"], "tenant")
 
     def test_create_share_nonexistent_artifact(self):
         """Creating share for nonexistent artifact returns 404."""
@@ -238,18 +204,17 @@ class ListSharesViewTests(ArtifactShareAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 2)
 
-    def test_list_shares_as_admin(self):
-        """Project admin can list share links."""
-        self.client.force_authenticate(user=self.admin_user)
+    def test_list_shares_as_non_creator_forbidden(self):
+        """Non-creator users cannot list share links."""
+        self.client.force_authenticate(user=self.other_user)
 
         url = reverse("artifacts:list_shares", kwargs={"artifact_id": self.artifact.id})
         response = self.client.get(url)
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_shares_as_regular_user_forbidden(self):
-        """Regular project member cannot list share links."""
+        """Regular users who are not the creator cannot list share links."""
         self.client.force_authenticate(user=self.regular_user)
 
         url = reverse("artifacts:list_shares", kwargs={"artifact_id": self.artifact.id})
@@ -307,9 +272,9 @@ class RevokeShareViewTests(ArtifactShareAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(SharedArtifact.objects.filter(pk=self.share.pk).exists())
 
-    def test_revoke_share_as_admin(self):
-        """Project admin can revoke share links."""
-        self.client.force_authenticate(user=self.admin_user)
+    def test_revoke_share_as_non_creator_forbidden(self):
+        """Non-creator users cannot revoke share links."""
+        self.client.force_authenticate(user=self.other_user)
 
         url = reverse("artifacts:revoke_share", kwargs={
             "artifact_id": self.artifact.id,
@@ -317,11 +282,11 @@ class RevokeShareViewTests(ArtifactShareAPITestCase):
         })
         response = self.client.delete(url)
 
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(SharedArtifact.objects.filter(pk=self.share.pk).exists())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(SharedArtifact.objects.filter(pk=self.share.pk).exists())
 
     def test_revoke_share_as_regular_user_forbidden(self):
-        """Regular project member cannot revoke share links."""
+        """Regular users who are not the creator cannot revoke share links."""
         self.client.force_authenticate(user=self.regular_user)
 
         url = reverse("artifacts:revoke_share", kwargs={

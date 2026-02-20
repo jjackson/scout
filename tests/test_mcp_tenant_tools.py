@@ -7,6 +7,8 @@ to the parameterized query execution.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from django.test import override_settings
+
 import pytest
 
 from mcp_server.context import QueryContext
@@ -525,7 +527,7 @@ class TestGetMetadataTool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 class TestLoadTenantContext:
     """Test that load_tenant_context builds the correct QueryContext."""
 
@@ -540,12 +542,11 @@ class TestLoadTenantContext:
             state=SchemaState.ACTIVE,
         )
 
-        with patch("mcp_server.context.settings") as mock_settings:
-            mock_settings.MANAGED_DATABASE_URL = "postgresql://user:pass@localhost:5432/scout"
-            ctx = await load_tenant_context("dimagi")
+        with override_settings(MANAGED_DATABASE_URL="postgresql://user:pass@localhost:5432/scout"):
+            ctx = await load_tenant_context("test-domain")
 
         assert ctx.schema_name == "dimagi"
-        assert ctx.tenant_id == "dimagi"
+        assert ctx.tenant_id == "test-domain"
         assert ctx.connection_params["host"] == "localhost"
         assert ctx.connection_params["dbname"] == "scout"
         assert "search_path=dimagi" in ctx.connection_params["options"]
@@ -566,10 +567,9 @@ class TestLoadTenantContext:
             state=SchemaState.ACTIVE,
         )
 
-        with patch("mcp_server.context.settings") as mock_settings:
-            mock_settings.MANAGED_DATABASE_URL = ""
+        with override_settings(MANAGED_DATABASE_URL=""):
             with pytest.raises(ValueError, match="MANAGED_DATABASE_URL"):
-                await load_tenant_context("dimagi")
+                await load_tenant_context("test-domain")
 
 
 # ---------------------------------------------------------------------------

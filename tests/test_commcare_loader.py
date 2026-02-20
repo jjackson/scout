@@ -8,8 +8,9 @@ class TestCommCareCaseLoader:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "meta": {"next": None, "total_count": 2},
-            "objects": [
+            "next": None,
+            "matching_records": 2,
+            "cases": [
                 {"case_id": "abc", "case_type": "patient", "properties": {"name": "Alice"}},
                 {"case_id": "def", "case_type": "patient", "properties": {"name": "Bob"}},
             ],
@@ -28,17 +29,16 @@ class TestCommCareCaseLoader:
         page1 = MagicMock()
         page1.status_code = 200
         page1.json.return_value = {
-            "meta": {
-                "next": "https://www.commcarehq.org/api/v0.5/case/?offset=2",
-                "total_count": 3,
-            },
-            "objects": [{"case_id": "1"}, {"case_id": "2"}],
+            "next": "https://www.commcarehq.org/a/dimagi/api/case/v2/?cursor=abc",
+            "matching_records": 3,
+            "cases": [{"case_id": "1"}, {"case_id": "2"}],
         }
         page2 = MagicMock()
         page2.status_code = 200
         page2.json.return_value = {
-            "meta": {"next": None, "total_count": 3},
-            "objects": [{"case_id": "3"}],
+            "next": None,
+            "matching_records": 3,
+            "cases": [{"case_id": "3"}],
         }
 
         with patch(

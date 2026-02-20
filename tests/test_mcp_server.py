@@ -5,12 +5,11 @@ Tests the full tool handler → service → response envelope chain.
 Database access is mocked at the Django ORM / psycopg2 boundary.
 """
 
-import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from mcp_server.context import ProjectContext, load_project_context
+from mcp_server.context import QueryContext
 from mcp_server.envelope import (
     CONNECTION_ERROR,
     INTERNAL_ERROR,
@@ -27,22 +26,13 @@ from mcp_server.services.query import execute_query
 
 
 @pytest.fixture
-def project_id():
-    return str(uuid.uuid4())
-
-
-@pytest.fixture
-def project_context(project_id):
-    """A ProjectContext that doesn't require DB access."""
-    return ProjectContext(
-        project_id=project_id,
-        project_name="Test Project",
-        db_schema="public",
-        allowed_tables=[],
-        excluded_tables=[],
+def project_context():
+    """A QueryContext that doesn't require DB access."""
+    return QueryContext(
+        tenant_id="test-tenant",
+        schema_name="public",
         max_rows_per_query=500,
         max_query_timeout_seconds=30,
-        readonly_role="readonly",
         connection_params={
             "host": "localhost",
             "port": 5432,
@@ -110,45 +100,6 @@ class TestEnvelopeFormat:
         assert timer.elapsed_ms >= 0
 
 
-# --- ProjectContext loading tests (mocked) ---
-
-
-class TestLoadProjectContext:
-
-    @pytest.mark.asyncio
-    async def test_invalid_project_id_raises(self):
-        """Loading a non-existent project raises ValueError."""
-        fake_id = str(uuid.uuid4())
-        mock_qs = AsyncMock()
-
-        with patch("apps.projects.models.Project") as MockProject:
-            MockProject.DoesNotExist = type("DoesNotExist", (Exception,), {})
-            MockProject.objects.select_related.return_value = mock_qs
-            mock_qs.aget.side_effect = MockProject.DoesNotExist()
-
-            with pytest.raises(ValueError, match="not found or not active"):
-                await load_project_context(fake_id)
-
-    @pytest.mark.asyncio
-    async def test_inactive_connection_raises(self):
-        """Loading a project with inactive DB connection raises ValueError."""
-        mock_project = type("Project", (), {
-            "id": uuid.uuid4(),
-            "name": "Test",
-            "database_connection": type("Conn", (), {"is_active": False})(),
-        })()
-
-        mock_qs = AsyncMock()
-        mock_qs.aget.return_value = mock_project
-
-        with patch("apps.projects.models.Project") as MockProject:
-            MockProject.DoesNotExist = type("DoesNotExist", (Exception,), {})
-            MockProject.objects.select_related.return_value = mock_qs
-
-            with pytest.raises(ValueError, match="not active"):
-                await load_project_context(str(mock_project.id))
-
-
 # --- Query service tests ---
 
 
@@ -176,23 +127,6 @@ class TestExecuteQuery:
         assert result["success"] is False
         assert result["error"]["code"] == VALIDATION_ERROR
         assert "not allowed" in result["error"]["message"].lower()
-
-    @pytest.mark.asyncio
-    async def test_excluded_table_rejected(self):
-        ctx = ProjectContext(
-            project_id=str(uuid.uuid4()),
-            project_name="Test",
-            db_schema="public",
-            allowed_tables=[],
-            excluded_tables=["secrets"],
-            max_rows_per_query=500,
-            max_query_timeout_seconds=30,
-            readonly_role="",
-            connection_params={},
-        )
-        result = await execute_query(ctx, "SELECT * FROM secrets")
-        assert result["success"] is False
-        assert result["error"]["code"] == VALIDATION_ERROR
 
     @pytest.mark.asyncio
     @patch("mcp_server.services.query._execute_sync")

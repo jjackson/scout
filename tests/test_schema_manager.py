@@ -25,7 +25,7 @@ class TestSchemaManager:
             mgr = SchemaManager()
             ts = mgr.provision(tenant_membership)
 
-        assert ts.schema_name == tenant_membership.tenant_id
+        assert ts.schema_name == mgr._sanitize_schema_name(tenant_membership.tenant_id)
         assert ts.state == "active"
         assert TenantSchema.objects.count() == 1
         # Verify DDL was executed
