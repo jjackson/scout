@@ -6,7 +6,6 @@ import {
   ChefHat,
   Database,
   LayoutDashboard,
-  Settings,
   LogOut,
   Plus,
   Link2,

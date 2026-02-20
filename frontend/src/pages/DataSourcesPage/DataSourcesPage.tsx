@@ -66,7 +66,6 @@ export function DataSourcesPage() {
   const [listTestResult, setListTestResult] = useState<ConnectionTestResult | null>(null)
   const [listTesting, setListTesting] = useState(false)
 
-  const activeProjectId = useAppStore((s) => s.activeProjectId)
   const user = useAppStore((s) => s.user)
   const isAdmin = user?.is_staff ?? false
 
@@ -102,7 +101,7 @@ export function DataSourcesPage() {
   }
 
   const handleCsvUpload = async () => {
-    if (!csvFile || !tableName || !activeProjectId) return
+    if (!csvFile || !tableName) return
 
     setUploading(true)
     setImportResult(null)
@@ -110,12 +109,11 @@ export function DataSourcesPage() {
 
     const formData = new FormData()
     formData.append("file", csvFile)
-    formData.append("project_id", activeProjectId)
     formData.append("table_name", tableName)
 
     try {
       const result = await api.upload<CsvImportResult>(
-        "/api/projects/csv-import/",
+        "/api/csv-import/",
         formData,
       )
       setImportResult(result)
@@ -236,92 +234,90 @@ export function DataSourcesPage() {
       </div>
 
       {/* CSV Import */}
-      {activeProjectId && (
-        <Card className="mb-6" data-testid="csv-import-card">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Upload className="mr-2 h-5 w-5" />
-              Import CSV
-            </CardTitle>
-            <CardDescription>
-              Upload a CSV file to import it as a table in your project's database.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="csv-file">CSV File</Label>
-                  <Input
-                    id="csv-file"
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv"
-                    onChange={handleFileSelect}
-                    data-testid="csv-import-file"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="table-name">Table Name</Label>
-                  <Input
-                    id="table-name"
-                    value={tableName}
-                    onChange={(e) => setTableName(e.target.value)}
-                    placeholder="my_table"
-                    data-testid="csv-import-table-name"
-                  />
+      <Card className="mb-6" data-testid="csv-import-card">
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Upload className="mr-2 h-5 w-5" />
+            Import CSV
+          </CardTitle>
+          <CardDescription>
+            Upload a CSV file to import it as a table in your workspace database.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="csv-file">CSV File</Label>
+                <Input
+                  id="csv-file"
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileSelect}
+                  data-testid="csv-import-file"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="table-name">Table Name</Label>
+                <Input
+                  id="table-name"
+                  value={tableName}
+                  onChange={(e) => setTableName(e.target.value)}
+                  placeholder="my_table"
+                  data-testid="csv-import-table-name"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={handleCsvUpload}
+              disabled={!csvFile || !tableName || uploading}
+              data-testid="csv-import-upload"
+            >
+              {uploading ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="mr-2 h-4 w-4" />
+              )}
+              {uploading ? "Importing..." : "Upload & Import"}
+            </Button>
+
+            {importError && (
+              <div className="rounded-md bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/20 dark:text-red-400">
+                <div className="flex items-center">
+                  <AlertCircle className="mr-2 h-4 w-4 shrink-0" />
+                  <span>{importError}</span>
                 </div>
               </div>
-              <Button
-                onClick={handleCsvUpload}
-                disabled={!csvFile || !tableName || uploading}
-                data-testid="csv-import-upload"
-              >
-                {uploading ? (
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Upload className="mr-2 h-4 w-4" />
-                )}
-                {uploading ? "Importing..." : "Upload & Import"}
-              </Button>
+            )}
 
-              {importError && (
-                <div className="rounded-md bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/20 dark:text-red-400">
-                  <div className="flex items-center">
-                    <AlertCircle className="mr-2 h-4 w-4 shrink-0" />
-                    <span>{importError}</span>
-                  </div>
+            {importResult && (
+              <div className="rounded-md bg-green-50 p-3 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
+                <div className="flex items-center mb-2">
+                  <CheckCircle className="mr-2 h-4 w-4 shrink-0" />
+                  <span>
+                    Imported {importResult.row_count.toLocaleString()} rows,{" "}
+                    {importResult.column_count} columns into{" "}
+                    <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">
+                      {importResult.table_name}
+                    </code>
+                    {" — "}
+                    <Link
+                      to="/data-dictionary"
+                      className="underline hover:text-green-900 dark:hover:text-green-300"
+                    >
+                      View in Data Dictionary
+                    </Link>
+                  </span>
                 </div>
-              )}
-
-              {importResult && (
-                <div className="rounded-md bg-green-50 p-3 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
-                  <div className="flex items-center mb-2">
-                    <CheckCircle className="mr-2 h-4 w-4 shrink-0" />
-                    <span>
-                      Imported {importResult.row_count.toLocaleString()} rows,{" "}
-                      {importResult.column_count} columns into{" "}
-                      <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">
-                        {importResult.table_name}
-                      </code>
-                      {" — "}
-                      <Link
-                        to="/data-dictionary"
-                        className="underline hover:text-green-900 dark:hover:text-green-300"
-                      >
-                        View in Data Dictionary
-                      </Link>
-                    </span>
-                  </div>
-                  <div className="ml-6 text-xs text-green-700 dark:text-green-500">
-                    {importResult.columns.map((c) => c.name).join(", ")}
-                  </div>
+                <div className="ml-6 text-xs text-green-700 dark:text-green-500">
+                  {importResult.columns.map((c) => c.name).join(", ")}
                 </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Admin: Database Connections */}
       {isAdmin && (
