@@ -49,3 +49,43 @@ class TestTenantCredential:
                 tenant_membership=membership,
                 credential_type=TenantCredential.OAUTH,
             )
+
+
+class TestResolveCommcareDomains:
+    def test_creates_tenant_credential_oauth(self, user, db):
+        """resolve_commcare_domains must create TenantCredential(type=oauth) for each membership."""
+        from unittest.mock import patch
+        from apps.users.services.tenant_resolution import resolve_commcare_domains
+
+        fake_domains = [
+            {"domain_name": "domain-a", "project_name": "Domain A"},
+            {"domain_name": "domain-b", "project_name": "Domain B"},
+        ]
+        with patch(
+            "apps.users.services.tenant_resolution._fetch_all_domains",
+            return_value=fake_domains,
+        ):
+            memberships = resolve_commcare_domains(user, "fake-token")
+
+        assert len(memberships) == 2
+        for tm in memberships:
+            cred = TenantCredential.objects.get(tenant_membership=tm)
+            assert cred.credential_type == TenantCredential.OAUTH
+            assert cred.encrypted_credential == ""
+
+    def test_idempotent_on_re_resolve(self, user, db):
+        """Calling resolve twice does not create duplicate TenantCredentials."""
+        from unittest.mock import patch
+        from apps.users.services.tenant_resolution import resolve_commcare_domains
+
+        fake_domains = [{"domain_name": "domain-a", "project_name": "Domain A"}]
+        with patch(
+            "apps.users.services.tenant_resolution._fetch_all_domains",
+            return_value=fake_domains,
+        ):
+            resolve_commcare_domains(user, "fake-token")
+            resolve_commcare_domains(user, "fake-token")
+
+        assert TenantCredential.objects.filter(
+            tenant_membership__user=user
+        ).count() == 1

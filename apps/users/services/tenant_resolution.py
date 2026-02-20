@@ -12,7 +12,7 @@ import logging
 
 import requests
 
-from apps.users.models import TenantMembership
+from apps.users.models import TenantCredential, TenantMembership
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ def resolve_commcare_domains(user, access_token: str) -> list[TenantMembership]:
             provider="commcare",
             tenant_id=domain["domain_name"],
             defaults={"tenant_name": domain["project_name"]},
+        )
+        # Ensure a TenantCredential(oauth) exists for this membership
+        TenantCredential.objects.get_or_create(
+            tenant_membership=tm,
+            defaults={"credential_type": TenantCredential.OAUTH},
         )
         memberships.append(tm)
 
