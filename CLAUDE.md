@@ -15,6 +15,9 @@ uv run python manage.py migrate           # Run migrations
 cd frontend && bun install && bun dev     # Dev server on :5173
 cd frontend && bun run build              # Production build (runs tsc first)
 
+# All dev servers at once (Django :8000, MCP :8100, Vite :5173)
+uv run honcho -f Procfile.dev start
+
 # Full stack via Docker
 docker compose up                         # All services (api :8000, frontend :3000, mcp :8100)
 
