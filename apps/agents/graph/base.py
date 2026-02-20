@@ -40,17 +40,16 @@ from apps.agents.tools.artifact_tool import create_artifact_tools
 from apps.agents.tools.learning_tool import create_save_learning_tool
 from apps.agents.tools.recipe_tool import create_recipe_tool
 from apps.knowledge.services.retriever import KnowledgeRetriever
-from apps.projects.services.data_dictionary import DataDictionaryGenerator
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
 
-    from apps.projects.models import Project
+    from apps.projects.models import TenantWorkspace
     from apps.users.models import TenantMembership, User
 
 logger = logging.getLogger(__name__)
 
-# MCP tools that require a context ID (tenant_id or project_id) injected from state
+# MCP tools that require a context ID (tenant_id) injected from state
 MCP_TOOL_NAMES = frozenset(
     {
         "list_tables",
@@ -144,65 +143,58 @@ def _make_injecting_tool_node(
 
 
 def build_agent_graph(
-    project: Project | None = None,
+    tenant_membership: TenantMembership,
     user: User | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     mcp_tools: list | None = None,
     oauth_tokens: dict | None = None,
-    tenant_membership: "TenantMembership | None" = None,
 ):
     """
-    Build a LangGraph agent graph for a project or tenant.
+    Build a LangGraph agent graph for a tenant workspace.
 
-    Accepts either a Project (legacy) or TenantMembership (new tenant flow).
-    When tenant_membership is provided, uses MCP tools only (no project-local tools).
+    Args:
+        tenant_membership: The TenantMembership for the current user.
+        user: Optional User model instance.
+        checkpointer: Optional LangGraph checkpointer for conversation persistence.
+        mcp_tools: List of MCP tools to include.
+        oauth_tokens: Optional OAuth tokens for tool authentication.
     """
-    context_label = (
-        f"tenant:{tenant_membership.tenant_id}"
-        if tenant_membership
-        else f"project:{project.slug}"
-        if project
-        else "unknown"
+    from apps.projects.models import TenantWorkspace
+
+    workspace, _ = TenantWorkspace.objects.get_or_create(
+        tenant_id=tenant_membership.tenant_id,
+        defaults={"tenant_name": tenant_membership.tenant_name},
     )
-    logger.info("Building agent graph for %s", context_label)
+
+    logger.info("Building agent graph for tenant:%s", tenant_membership.tenant_id)
 
     # --- Build tools ---
-    if project:
-        tools = _build_tools(project, user, mcp_tools or [])
-    else:
-        tools = list(mcp_tools or [])
-    logger.debug("Created %d tools for %s", len(tools), context_label)
+    tools = _build_tools(workspace, user, mcp_tools or [])
+    logger.debug("Created %d tools for tenant:%s", len(tools), tenant_membership.tenant_id)
 
-    # --- Determine context ID injection ---
-    # MCP tools require tenant_id or project_id; we inject from state
-    # so the LLM doesn't need to (and can't hallucinate) the value.
-    # Maps: tool_arg_name -> state_field_name
-    if tenant_membership and not project:
-        injections = {
-            "tenant_id": "tenant_id",
-            "tenant_membership_id": "tenant_membership_id",
-        }
-    else:
-        injections = {"project_id": "project_id"}
+    # --- Inject tenant_id and tenant_membership_id into MCP tool calls ---
+    injections = {
+        "tenant_id": "tenant_id",
+        "tenant_membership_id": "tenant_membership_id",
+    }
     hidden_params = list(injections.keys())
 
     # --- Build LLM with tools ---
-    llm_model = project.llm_model if project else "claude-sonnet-4-5-20250929"
     llm = ChatAnthropic(
-        model=llm_model,
+        model="claude-sonnet-4-5-20250929",
         max_tokens=DEFAULT_MAX_TOKENS,
         temperature=DEFAULT_TEMPERATURE,
     )
-    # Give the LLM tool schemas without the injected parameters
     llm_tool_schemas = _llm_tool_schemas(tools, hidden_params=hidden_params)
     llm_with_tools = llm.bind_tools(llm_tool_schemas)
 
     # --- Build system prompt ---
-    if tenant_membership and not project:
-        system_prompt = _build_tenant_system_prompt(tenant_membership)
-    else:
-        system_prompt = _build_system_prompt(project)
-    logger.debug("System prompt assembled: %d characters for %s", len(system_prompt), context_label)
+    system_prompt = _build_system_prompt(workspace, tenant_membership)
+    logger.debug(
+        "System prompt assembled: %d characters for tenant:%s",
+        len(system_prompt),
+        tenant_membership.tenant_id,
+    )
 
     # --- Create tool node with context ID injection ---
     base_tool_node = ToolNode(tools)
@@ -297,15 +289,15 @@ def build_agent_graph(
     compiled = graph.compile(checkpointer=checkpointer)
 
     logger.info(
-        "Agent graph compiled for %s (checkpointer: %s)",
-        context_label,
+        "Agent graph compiled for tenant:%s (checkpointer: %s)",
+        tenant_membership.tenant_id,
         type(checkpointer).__name__ if checkpointer else "None",
     )
 
     return compiled
 
 
-def _build_tools(project: Project, user: User | None, mcp_tools: list) -> list:
+def _build_tools(workspace: TenantWorkspace, user: User | None, mcp_tools: list) -> list:
     """
     Build the tool list for the agent.
 
@@ -319,104 +311,53 @@ def _build_tools(project: Project, user: User | None, mcp_tools: list) -> list:
     - save_learning: For persisting discovered corrections
     - create_artifact: For creating interactive visualizations
     - update_artifact: For updating existing artifacts
-    - create_recipe: For creating replayable analysis workflows
+    - save_as_recipe: For creating replayable analysis workflows
 
     Args:
-        project: The Project model instance.
+        workspace: The TenantWorkspace model instance.
         user: Optional User for tracking learning discovery.
         mcp_tools: LangChain tools loaded from the MCP server.
 
     Returns:
         List of LangChain tool functions.
     """
-    # Start with MCP tools (data access)
     tools = list(mcp_tools)
-
-    # Learning tool (always included)
-    learning_tool = create_save_learning_tool(project, user)
-    tools.append(learning_tool)
-
-    # Artifact tools (always included)
-    artifact_tools = create_artifact_tools(project, user)
-    tools.extend(artifact_tools)
-
-    # Recipe tool (always included)
-    recipe_tool = create_recipe_tool(project, user)
-    tools.append(recipe_tool)
-
+    tools.append(create_save_learning_tool(workspace, user))
+    tools.extend(create_artifact_tools(workspace, user))
+    tools.append(create_recipe_tool(workspace, user))
     return tools
 
 
-def _build_system_prompt(project: Project) -> str:
+def _build_system_prompt(
+    workspace: TenantWorkspace, tenant_membership: TenantMembership
+) -> str:
     """
-    Assemble the complete system prompt from multiple sources.
+    Assemble the complete system prompt for a tenant workspace.
 
     The prompt is built from:
     1. BASE_SYSTEM_PROMPT: Core agent behavior and formatting
-    2. Project system prompt: Project-specific instructions
-    3. Knowledge retriever output: Metrics, rules, learnings
-    4. Data dictionary: Schema information
-
-    For large schemas, the data dictionary is abbreviated and the agent
-    should use the describe_table tool for details.
+    2. ARTIFACT_PROMPT_ADDITION: Instructions for creating artifacts
+    3. Workspace system prompt: Tenant-specific instructions
+    4. Knowledge retriever output: Metrics, rules, learnings
+    5. Tenant context: Tenant name, provider, query config
 
     Args:
-        project: The Project model instance.
+        workspace: The TenantWorkspace model instance.
+        tenant_membership: The TenantMembership for context metadata.
 
     Returns:
         Complete system prompt string.
     """
     sections = [BASE_SYSTEM_PROMPT]
-
-    # Artifact creation instructions
     sections.append(ARTIFACT_PROMPT_ADDITION)
 
-    # Project-specific system prompt
-    if project.system_prompt:
-        sections.append(f"""
-## Project-Specific Instructions
+    if workspace.system_prompt:
+        sections.append(f"\n## Tenant-Specific Instructions\n\n{workspace.system_prompt}\n")
 
-{project.system_prompt}
-""")
-
-    # Knowledge retriever output (metrics, rules, learnings)
-    retriever = KnowledgeRetriever(project)
+    retriever = KnowledgeRetriever(workspace)
     knowledge_context = retriever.retrieve()
-
     if knowledge_context:
-        sections.append(f"""
-## Project Knowledge Base
-
-{knowledge_context}
-""")
-
-    # Data dictionary
-    dd_generator = DataDictionaryGenerator(project)
-    dd_text = dd_generator.render_for_prompt()
-
-    sections.append(f"""
-## Database Schema
-
-{dd_text}
-""")
-
-    # Query configuration
-    sections.append(f"""
-## Query Configuration
-
-- Maximum rows per query: {project.max_rows_per_query}
-- Query timeout: {project.max_query_timeout_seconds} seconds
-- Schema: {project.db_schema}
-
-When results are truncated, suggest adding filters or using aggregations to reduce the result size.
-""")
-
-    return "\n".join(sections)
-
-
-def _build_tenant_system_prompt(tenant_membership: "TenantMembership") -> str:
-    """Build a system prompt for tenant-based (non-project) conversations."""
-    sections = [BASE_SYSTEM_PROMPT]
+        sections.append(f"\n## Knowledge Base\n\n{knowledge_context}\n")
 
     sections.append(f"""
 ## Tenant Context
