@@ -89,3 +89,84 @@ class TestResolveCommcareDomains:
         assert TenantCredential.objects.filter(
             tenant_membership__user=user
         ).count() == 1
+
+
+class TestTenantCredentialEndpoints:
+    def test_post_creates_membership_and_credential(self, client, db, user):
+        client.force_login(user)
+        resp = client.post(
+            "/api/auth/tenant-credentials/",
+            data={
+                "provider": "commcare",
+                "tenant_id": "my-domain",
+                "tenant_name": "My Domain",
+                "credential": "user@example.com:abc123",
+            },
+            content_type="application/json",
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "membership_id" in data
+
+        from apps.users.models import TenantCredential, TenantMembership
+        tm = TenantMembership.objects.get(id=data["membership_id"])
+        assert tm.provider == "commcare"
+        assert tm.tenant_id == "my-domain"
+        cred = TenantCredential.objects.get(tenant_membership=tm)
+        assert cred.credential_type == TenantCredential.API_KEY
+
+    def test_api_key_stored_encrypted(self, client, db, user):
+        """The raw DB value must not contain the plaintext credential."""
+        client.force_login(user)
+        plaintext = "user@example.com:supersecretkey"
+        client.post(
+            "/api/auth/tenant-credentials/",
+            data={
+                "provider": "commcare",
+                "tenant_id": "secure-domain",
+                "tenant_name": "Secure Domain",
+                "credential": plaintext,
+            },
+            content_type="application/json",
+        )
+        from apps.users.models import TenantCredential
+        cred = TenantCredential.objects.get(
+            tenant_membership__tenant_id="secure-domain"
+        )
+        assert plaintext not in cred.encrypted_credential
+        # Verify round-trip decryption works
+        from apps.users.adapters import decrypt_credential
+        assert decrypt_credential(cred.encrypted_credential) == plaintext
+
+    def test_get_lists_credentials(self, client, db, user):
+        from apps.users.models import TenantCredential, TenantMembership
+        tm = TenantMembership.objects.create(
+            user=user, provider="commcare", tenant_id="d1", tenant_name="D1"
+        )
+        TenantCredential.objects.create(
+            tenant_membership=tm, credential_type=TenantCredential.OAUTH
+        )
+        client.force_login(user)
+        resp = client.get("/api/auth/tenant-credentials/")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) == 1
+        assert items[0]["credential_type"] == "oauth"
+        assert "encrypted_credential" not in items[0]  # never exposed
+
+    def test_delete_removes_credential_and_membership(self, client, db, user):
+        from apps.users.models import TenantCredential, TenantMembership
+        tm = TenantMembership.objects.create(
+            user=user, provider="commcare", tenant_id="d2", tenant_name="D2"
+        )
+        TenantCredential.objects.create(
+            tenant_membership=tm, credential_type=TenantCredential.OAUTH
+        )
+        client.force_login(user)
+        resp = client.delete(f"/api/auth/tenant-credentials/{tm.id}/")
+        assert resp.status_code == 200
+        assert not TenantMembership.objects.filter(id=tm.id).exists()
+
+    def test_unauthenticated_returns_401(self, client, db):
+        resp = client.post("/api/auth/tenant-credentials/", data={}, content_type="application/json")
+        assert resp.status_code == 401

@@ -11,7 +11,12 @@ from apps.chat.views import (
     providers_view,
     signup_view,
 )
-from apps.users.views import tenant_list_view, tenant_select_view
+from apps.users.views import (
+    tenant_credential_detail_view,
+    tenant_credential_list_view,
+    tenant_list_view,
+    tenant_select_view,
+)
 
 app_name = "auth"
 
@@ -29,4 +34,10 @@ urlpatterns = [
     path("signup/", signup_view, name="signup"),
     path("tenants/", tenant_list_view, name="tenant-list"),
     path("tenants/select/", tenant_select_view, name="tenant-select"),
+    path("tenant-credentials/", tenant_credential_list_view, name="tenant-credential-list"),
+    path(
+        "tenant-credentials/<str:membership_id>/",
+        tenant_credential_detail_view,
+        name="tenant-credential-detail",
+    ),
 ]

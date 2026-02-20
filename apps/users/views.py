@@ -93,3 +93,97 @@ async def tenant_select_view(request):
     await tm.asave(update_fields=["last_selected_at"])
 
     return JsonResponse({"status": "ok", "tenant_id": tm.tenant_id})
+
+
+@require_http_methods(["GET", "POST"])
+async def tenant_credential_list_view(request):
+    """GET  /api/auth/tenant-credentials/ — list configured tenant credentials
+    POST /api/auth/tenant-credentials/ — create a new API-key-based tenant"""
+    user = await _get_user_if_authenticated(request)
+    if user is None:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    if request.method == "GET":
+        results = []
+        async for tm in TenantMembership.objects.filter(
+            user=user,
+            credential__isnull=False,
+        ).select_related("credential"):
+            results.append(
+                {
+                    "membership_id": str(tm.id),
+                    "provider": tm.provider,
+                    "tenant_id": tm.tenant_id,
+                    "tenant_name": tm.tenant_name,
+                    "credential_type": tm.credential.credential_type,
+                }
+            )
+        return JsonResponse(results, safe=False)
+
+    # POST — create API-key-backed membership
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    provider = body.get("provider", "").strip()
+    tenant_id = body.get("tenant_id", "").strip()
+    tenant_name = body.get("tenant_name", "").strip()
+    credential = body.get("credential", "").strip()
+
+    if not all([provider, tenant_id, tenant_name, credential]):
+        return JsonResponse(
+            {"error": "provider, tenant_id, tenant_name, and credential are required"},
+            status=400,
+        )
+
+    from django.db import transaction
+
+    from apps.users.adapters import encrypt_credential
+    from apps.users.models import TenantCredential
+
+    try:
+        encrypted = await sync_to_async(encrypt_credential)(credential)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+    def _create():
+        with transaction.atomic():
+            tm, _ = TenantMembership.objects.update_or_create(
+                user=user,
+                provider=provider,
+                tenant_id=tenant_id,
+                defaults={"tenant_name": tenant_name},
+            )
+            TenantCredential.objects.update_or_create(
+                tenant_membership=tm,
+                defaults={
+                    "credential_type": TenantCredential.API_KEY,
+                    "encrypted_credential": encrypted,
+                },
+            )
+            return tm
+
+    tm = await sync_to_async(_create)()
+    return JsonResponse({"membership_id": str(tm.id)}, status=201)
+
+
+@require_http_methods(["DELETE"])
+async def tenant_credential_detail_view(request, membership_id):
+    """DELETE /api/auth/tenant-credentials/<membership_id>/ — remove a credential"""
+    user = await _get_user_if_authenticated(request)
+    if user is None:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    def _delete():
+        try:
+            tm = TenantMembership.objects.get(id=membership_id, user=user)
+            tm.delete()  # cascades to TenantCredential
+            return True
+        except TenantMembership.DoesNotExist:
+            return False
+
+    deleted = await sync_to_async(_delete)()
+    if not deleted:
+        return JsonResponse({"error": "Not found"}, status=404)
+    return JsonResponse({"status": "deleted"})
