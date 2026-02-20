@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcp_server.context import ProjectContext
+from mcp_server.context import QueryContext
 from mcp_server.envelope import NOT_FOUND, VALIDATION_ERROR
 
 # All async tests in this module use pytest-asyncio
@@ -33,16 +33,12 @@ def schema_name():
 
 @pytest.fixture
 def tenant_context(tenant_id, schema_name):
-    """A ProjectContext representing a tenant (as returned by load_tenant_context)."""
-    return ProjectContext(
-        project_id=f"tenant:{tenant_id}",
-        project_name=tenant_id,
-        db_schema=schema_name,
-        allowed_tables=[],
-        excluded_tables=[],
+    """A QueryContext representing a tenant (as returned by load_tenant_context)."""
+    return QueryContext(
+        tenant_id=tenant_id,
+        schema_name=schema_name,
         max_rows_per_query=500,
         max_query_timeout_seconds=30,
-        readonly_role="",
         connection_params={
             "host": "localhost",
             "port": 5432,
@@ -139,15 +135,10 @@ class TestExecuteSyncParameterized:
 
         mock_conn = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
 
-        with patch("mcp_server.services.query.get_pool_manager") as mock_pm:
-            mock_pm.return_value.get_connection.return_value.__enter__ = MagicMock(
-                return_value=mock_conn
-            )
-            mock_pm.return_value.get_connection.return_value.__exit__ = MagicMock(
-                return_value=False
-            )
-
+        with patch("mcp_server.services.query._get_connection", return_value=mock_conn):
             result = _execute_sync_parameterized(
                 tenant_context,
                 "SELECT table_name, table_type FROM information_schema.tables "
@@ -180,15 +171,10 @@ class TestExecuteSyncParameterized:
 
         mock_conn = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
 
-        with patch("mcp_server.services.query.get_pool_manager") as mock_pm:
-            mock_pm.return_value.get_connection.return_value.__enter__ = MagicMock(
-                return_value=mock_conn
-            )
-            mock_pm.return_value.get_connection.return_value.__exit__ = MagicMock(
-                return_value=False
-            )
-
+        with patch("mcp_server.services.query._get_connection", return_value=mock_conn):
             result = _execute_sync_parameterized(
                 tenant_context,
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = %s",
@@ -275,19 +261,15 @@ class TestTenantListTables:
 
         assert tables == []
 
-    async def test_uses_ctx_db_schema_not_hardcoded(self):
+    async def test_uses_ctx_schema_name_not_hardcoded(self):
         """Ensure the schema name comes from context, not hardcoded."""
         from mcp_server.server import _tenant_list_tables
 
-        custom_ctx = ProjectContext(
-            project_id="tenant:my-org",
-            project_name="my-org",
-            db_schema="my_custom_schema",
-            allowed_tables=[],
-            excluded_tables=[],
+        custom_ctx = QueryContext(
+            tenant_id="my-org",
+            schema_name="my_custom_schema",
             max_rows_per_query=500,
             max_query_timeout_seconds=30,
-            readonly_role="",
             connection_params={},
         )
 
@@ -545,10 +527,10 @@ class TestGetMetadataTool:
 
 @pytest.mark.django_db
 class TestLoadTenantContext:
-    """Test that load_tenant_context builds the correct ProjectContext."""
+    """Test that load_tenant_context builds the correct QueryContext."""
 
     async def test_schema_name_in_context(self, tenant_membership):
-        """Verify the schema name from TenantSchema flows into ProjectContext.db_schema."""
+        """Verify the schema name from TenantSchema flows into QueryContext.schema_name."""
         from apps.projects.models import SchemaState, TenantSchema
         from mcp_server.context import load_tenant_context
 
@@ -562,8 +544,8 @@ class TestLoadTenantContext:
             mock_settings.MANAGED_DATABASE_URL = "postgresql://user:pass@localhost:5432/scout"
             ctx = await load_tenant_context("dimagi")
 
-        assert ctx.db_schema == "dimagi"
-        assert ctx.project_name == "dimagi"
+        assert ctx.schema_name == "dimagi"
+        assert ctx.tenant_id == "dimagi"
         assert ctx.connection_params["host"] == "localhost"
         assert ctx.connection_params["dbname"] == "scout"
         assert "search_path=dimagi" in ctx.connection_params["options"]

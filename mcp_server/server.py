@@ -54,7 +54,7 @@ async def _tenant_list_tables(ctx) -> list[dict]:
         ctx,
         "SELECT table_name, table_type FROM information_schema.tables "
         "WHERE table_schema = %s ORDER BY table_name",
-        (ctx.db_schema,),
+        (ctx.schema_name,),
     )
     if not result.get("success", True) and "error" in result:
         return []
@@ -79,7 +79,7 @@ async def _tenant_describe_table(ctx, table_name: str) -> dict | None:
         "FROM information_schema.columns "
         "WHERE table_schema = %s AND table_name = %s "
         "ORDER BY ordinal_position",
-        (ctx.db_schema, table_name),
+        (ctx.schema_name, table_name),
     )
     if not result.get("rows"):
         return None
@@ -118,7 +118,7 @@ async def list_tables(tenant_id: str) -> dict:
         tc["result"] = success_response(
             {"tables": tables},
             tenant_id=tenant_id,
-            schema=ctx.db_schema,
+            schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
         return tc["result"]
@@ -144,14 +144,14 @@ async def describe_table(tenant_id: str, table_name: str) -> dict:
         table = await _tenant_describe_table(ctx, table_name)
         if table is None:
             tc["result"] = error_response(
-                NOT_FOUND, f"Table '{table_name}' not found in schema '{ctx.db_schema}'"
+                NOT_FOUND, f"Table '{table_name}' not found in schema '{ctx.schema_name}'"
             )
             return tc["result"]
 
         tc["result"] = success_response(
             table,
             tenant_id=tenant_id,
-            schema=ctx.db_schema,
+            schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
         return tc["result"]
@@ -181,9 +181,9 @@ async def get_metadata(tenant_id: str) -> dict:
                 tables[t["name"]] = detail
 
         tc["result"] = success_response(
-            {"schema": ctx.db_schema, "table_count": len(tables), "tables": tables},
+            {"schema": ctx.schema_name, "table_count": len(tables), "tables": tables},
             tenant_id=tenant_id,
-            schema=ctx.db_schema,
+            schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
         return tc["result"]
@@ -230,7 +230,7 @@ async def query(tenant_id: str, sql: str) -> dict:
                 "tables_accessed": result.get("tables_accessed", []),
             },
             tenant_id=tenant_id,
-            schema=ctx.db_schema,
+            schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
             warnings=warnings or None,
         )

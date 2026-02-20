@@ -1,9 +1,7 @@
 """
 Query execution service for the MCP server.
 
-Validates and executes read-only SQL queries against a project's database.
-Reuses SQLValidator for safety checks and ConnectionPoolManager for
-connection pooling. All sync psycopg2 work is wrapped with sync_to_async.
+Validates and executes read-only SQL queries against a tenant's database schema.
 """
 
 from __future__ import annotations
@@ -13,8 +11,7 @@ from typing import Any
 
 from asgiref.sync import sync_to_async
 
-from apps.projects.services.db_manager import get_pool_manager
-from mcp_server.context import ProjectContext
+from mcp_server.context import QueryContext
 from mcp_server.envelope import (
     CONNECTION_ERROR,
     INTERNAL_ERROR,
@@ -27,39 +24,33 @@ from mcp_server.services.sql_validator import SQLValidationError, SQLValidator
 logger = logging.getLogger(__name__)
 
 
-def _build_validator(ctx: ProjectContext) -> SQLValidator:
-    """Create a SQLValidator configured from the project context."""
+def _build_validator(ctx: QueryContext) -> SQLValidator:
+    """Create a SQLValidator configured from the query context."""
     return SQLValidator(
-        schema=ctx.db_schema,
+        schema=ctx.schema_name,
         allowed_schemas=[],
-        allowed_tables=ctx.allowed_tables,
-        excluded_tables=ctx.excluded_tables,
         max_limit=ctx.max_rows_per_query,
     )
 
 
-def _execute_sync(ctx: ProjectContext, sql: str, timeout_seconds: int) -> dict[str, Any]:
-    """Run a SQL query synchronously using the connection pool.
+def _get_connection(ctx: QueryContext):
+    """Create a psycopg2 connection from context params."""
+    import psycopg2
 
-    This function is meant to be called via sync_to_async.
-    """
+    return psycopg2.connect(**ctx.connection_params)
+
+
+def _execute_sync(ctx: QueryContext, sql: str, timeout_seconds: int) -> dict[str, Any]:
+    """Run a SQL query synchronously."""
     from psycopg2 import sql as psql
 
-    pool_mgr = get_pool_manager()
-
-    # ConnectionPoolManager.get_connection expects a Project-like object with
-    # .id and .get_connection_params(). Build a minimal shim from context.
-    project_shim = _ProjectShim(ctx)
-
-    with pool_mgr.get_connection(project_shim) as conn:
+    with _get_connection(ctx) as conn:
         cursor = conn.cursor()
         try:
-            # Set search_path and statement timeout
             cursor.execute(
-                psql.SQL("SET search_path TO {}").format(psql.Identifier(ctx.db_schema))
+                psql.SQL("SET search_path TO {}").format(psql.Identifier(ctx.schema_name))
             )
             cursor.execute("SET statement_timeout TO %s", (f"{timeout_seconds}s",))
-
             cursor.execute(sql)
 
             columns: list[str] = []
@@ -79,19 +70,16 @@ def _execute_sync(ctx: ProjectContext, sql: str, timeout_seconds: int) -> dict[s
 
 
 def _execute_sync_parameterized(
-    ctx: ProjectContext, sql: str, params: tuple, timeout_seconds: int
+    ctx: QueryContext, sql: str, params: tuple, timeout_seconds: int
 ) -> dict[str, Any]:
     """Run a parameterized SQL query synchronously. No validation or LIMIT injection."""
     from psycopg2 import sql as psql
 
-    pool_mgr = get_pool_manager()
-    project_shim = _ProjectShim(ctx)
-
-    with pool_mgr.get_connection(project_shim) as conn:
+    with _get_connection(ctx) as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                psql.SQL("SET search_path TO {}").format(psql.Identifier(ctx.db_schema))
+                psql.SQL("SET search_path TO {}").format(psql.Identifier(ctx.schema_name))
             )
             cursor.execute("SET statement_timeout TO %s", (f"{timeout_seconds}s",))
             cursor.execute(sql, params)
@@ -112,26 +100,10 @@ def _execute_sync_parameterized(
             cursor.close()
 
 
-class _ProjectShim:
-    """Minimal stand-in for a Project model, used by ConnectionPoolManager."""
-
-    def __init__(self, ctx: ProjectContext) -> None:
-        self.id = ctx.project_id
-        self.slug = ctx.project_name  # used only for logging
-        self._connection_params = ctx.connection_params
-
-    def get_connection_params(self) -> dict[str, Any]:
-        return self._connection_params
-
-
 async def execute_internal_query(
-    ctx: ProjectContext, sql: str, params: tuple = ()
+    ctx: QueryContext, sql: str, params: tuple = ()
 ) -> dict[str, Any]:
-    """Execute a trusted internal query, bypassing SQL validation.
-
-    Use this for metadata queries (information_schema, pg_catalog) that are
-    constructed by server code, NOT for user-submitted SQL.
-    """
+    """Execute a trusted internal query, bypassing SQL validation."""
     try:
         return await sync_to_async(_execute_sync_parameterized)(
             ctx, sql, params, ctx.max_query_timeout_seconds
@@ -142,25 +114,18 @@ async def execute_internal_query(
         return error_response(code, message)
 
 
-async def execute_query(ctx: ProjectContext, sql: str) -> dict[str, Any]:
-    """Validate and execute a SQL query, returning a structured result dict.
-
-    Returns a dict with keys:
-        columns, rows, row_count, truncated, sql_executed, tables_accessed, error
-    On validation or execution failure, only ``error`` is populated.
-    """
+async def execute_query(ctx: QueryContext, sql: str) -> dict[str, Any]:
+    """Validate and execute a SQL query, returning a structured result dict."""
     validator = _build_validator(ctx)
 
-    # --- Validate ---
     try:
         statement = validator.validate(sql)
     except SQLValidationError as e:
-        logger.warning("SQL validation failed for project %s: %s", ctx.project_name, e.message)
+        logger.warning("SQL validation failed for tenant %s: %s", ctx.tenant_id, e.message)
         return error_response(VALIDATION_ERROR, e.message)
 
     tables_accessed = validator.get_tables_accessed(statement)
 
-    # --- Inject / cap LIMIT ---
     modified = validator.inject_limit(statement)
     sql_executed = modified.sql(dialect=validator.dialect)
 
@@ -171,12 +136,11 @@ async def execute_query(ctx: ProjectContext, sql: str) -> dict[str, Any]:
         if limit_val and limit_val > validator.max_limit:
             truncated = True
 
-    # --- Execute ---
     try:
         result = await sync_to_async(_execute_sync)(ctx, sql_executed, ctx.max_query_timeout_seconds)
     except Exception as e:
         code, message = _classify_error(e)
-        logger.error("Query error for project %s: %s", ctx.project_name, message, exc_info=True)
+        logger.error("Query error for tenant %s: %s", ctx.tenant_id, message, exc_info=True)
         return error_response(code, message)
 
     if result["row_count"] == validator.max_limit:
