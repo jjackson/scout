@@ -265,6 +265,36 @@ class MaterializationRun(models.Model):
         return f"{self.pipeline} - {self.state}"
 
 
+class TenantWorkspace(models.Model):
+    """Per-tenant workspace holding agent config and serving as FK target for workspace models."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant_id = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Domain name (CommCare) or organization ID. One workspace per tenant.",
+    )
+    tenant_name = models.CharField(max_length=255)
+    system_prompt = models.TextField(
+        blank=True,
+        help_text="Tenant-specific system prompt. Merged with the base agent prompt.",
+    )
+    data_dictionary = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Auto-generated schema documentation.",
+    )
+    data_dictionary_generated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["tenant_name"]
+
+    def __str__(self):
+        return f"{self.tenant_name} ({self.tenant_id})"
+
+
 class ProjectRole(models.TextChoices):
     """Role choices for project membership."""
 
