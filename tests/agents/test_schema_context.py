@@ -143,3 +143,41 @@ async def test_fetch_schema_context_no_get_schema_status_instruction(mock_tenant
 
     assert "call `get_schema_status`" not in result
     assert "start of every conversation" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db
+async def test_build_system_prompt_no_schema_status_call():
+    """The assembled system prompt must not instruct the agent to call get_schema_status."""
+    from apps.agents.graph.base import _build_system_prompt
+    from apps.projects.models import SchemaState
+
+    mock_workspace = MagicMock()
+    mock_workspace.system_prompt = None
+
+    mock_membership = MagicMock()
+    mock_membership.tenant_id = "test-domain"
+    mock_membership.tenant_name = "Test"
+    mock_membership.provider = "commcare"
+
+    mock_ts = MagicMock()
+    mock_ts.state = SchemaState.ACTIVE
+
+    with (
+        patch("apps.agents.graph.base.KnowledgeRetriever") as MockKR,
+        patch("apps.agents.graph.base.TenantSchema") as MockTS,
+        patch("apps.agents.graph.base.get_registry") as mock_reg,
+        patch("apps.agents.graph.base.sync_to_async") as mock_s2a,
+        patch("apps.agents.graph.base._render_full_schema") as mock_full,
+    ):
+        MockKR.return_value.retrieve.return_value = ""
+        MockTS.objects.filter.return_value.afirst = AsyncMock(return_value=mock_ts)
+        mock_reg.return_value.get.return_value = MagicMock()
+        mock_s2a.return_value = AsyncMock(return_value=[])
+        mock_full.return_value = ""
+
+        prompt = await _build_system_prompt(mock_workspace, mock_membership)
+
+    assert "call `get_schema_status`" not in prompt
+    assert "start of every conversation" not in prompt
+    assert "## Data Availability" in prompt
