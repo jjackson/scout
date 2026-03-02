@@ -413,6 +413,63 @@ your loaded data. Are you sure?").
     return "\n".join(sections)
 
 
+def _build_custom_workspace_context(workspace):
+    """Build aggregated agent context for a CustomWorkspace.
+
+    Collects system prompts, knowledge entries, and agent learnings from all
+    member TenantWorkspaces plus workspace-specific additions.  Returns a dict
+    suitable for downstream prompt assembly when the agent operates within a
+    CustomWorkspace.
+    """
+    from django.db.models import Q
+
+    from apps.knowledge.models import AgentLearning, KnowledgeEntry
+    from apps.workspace.models import TenantWorkspace
+
+    tenant_workspaces = TenantWorkspace.objects.filter(custom_workspace_links__workspace=workspace)
+
+    # Aggregate system prompts
+    prompts = []
+    if workspace.system_prompt:
+        prompts.append(f"[Workspace: {workspace.name}]\n{workspace.system_prompt}")
+    for tw in tenant_workspaces:
+        if tw.system_prompt:
+            prompts.append(f"[Tenant: {tw.tenant_name}]\n{tw.system_prompt}")
+
+    # Aggregate knowledge
+    knowledge = list(
+        KnowledgeEntry.objects.filter(
+            Q(workspace__in=tenant_workspaces) | Q(custom_workspace=workspace)
+        ).values("title", "content", "tags")
+    )
+
+    # Aggregate learnings
+    learnings = list(
+        AgentLearning.objects.filter(
+            Q(workspace__in=tenant_workspaces) | Q(custom_workspace=workspace),
+            is_active=True,
+        ).order_by("-confidence_score")
+    )
+
+    # Available tenant info
+    available_tenants = [
+        {
+            "tenant_id": tw.tenant_id,
+            "tenant_name": tw.tenant_name,
+            "has_data_dictionary": bool(tw.data_dictionary),
+        }
+        for tw in tenant_workspaces
+    ]
+
+    return {
+        "system_prompts": prompts,
+        "knowledge": knowledge,
+        "learnings": learnings,
+        "available_tenants": available_tenants,
+    }
+
+
 __all__ = [
     "build_agent_graph",
+    "_build_custom_workspace_context",
 ]

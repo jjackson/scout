@@ -173,3 +173,110 @@ class TestKnowledgeDualFK:
         )
         assert learning.custom_workspace == ws
         assert learning.workspace is None
+
+
+@pytest.mark.django_db
+class TestCustomWorkspaceContext:
+    def test_build_context_aggregates_knowledge(
+        self, owner, tenant_workspace_a, tenant_workspace_b
+    ):
+        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.knowledge.models import KnowledgeEntry
+
+        ws = CustomWorkspace.objects.create(name="Context Test", created_by=owner)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_b)
+
+        # Create knowledge on each tenant workspace
+        KnowledgeEntry.objects.create(
+            workspace=tenant_workspace_a, title="Tenant A Knowledge", content="Content A"
+        )
+        KnowledgeEntry.objects.create(
+            workspace=tenant_workspace_b, title="Tenant B Knowledge", content="Content B"
+        )
+        # Create workspace-specific knowledge
+        KnowledgeEntry.objects.create(
+            custom_workspace=ws, title="Workspace Knowledge", content="Content WS"
+        )
+
+        context = _build_custom_workspace_context(ws)
+        assert len(context["knowledge"]) == 3
+        assert len(context["available_tenants"]) == 2
+
+    def test_build_context_aggregates_system_prompts(self, owner, tenant_workspace_a):
+        from apps.agents.graph.base import _build_custom_workspace_context
+
+        tenant_workspace_a.system_prompt = "Tenant prompt"
+        tenant_workspace_a.save()
+
+        ws = CustomWorkspace.objects.create(
+            name="Prompt Test", created_by=owner, system_prompt="Workspace prompt"
+        )
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+
+        context = _build_custom_workspace_context(ws)
+        assert len(context["system_prompts"]) == 2
+        assert "Workspace prompt" in context["system_prompts"][0]
+        assert "Tenant prompt" in context["system_prompts"][1]
+
+    def test_build_context_aggregates_learnings(self, owner, tenant_workspace_a):
+        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.knowledge.models import AgentLearning
+
+        ws = CustomWorkspace.objects.create(name="Learning Test", created_by=owner)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+
+        # Create learnings on tenant and workspace
+        AgentLearning.objects.create(
+            workspace=tenant_workspace_a,
+            description="Tenant learning",
+            is_active=True,
+            confidence_score=0.9,
+        )
+        AgentLearning.objects.create(
+            custom_workspace=ws,
+            description="Workspace learning",
+            is_active=True,
+            confidence_score=0.8,
+        )
+        # Inactive learning should be excluded
+        AgentLearning.objects.create(
+            workspace=tenant_workspace_a,
+            description="Inactive learning",
+            is_active=False,
+            confidence_score=0.7,
+        )
+
+        context = _build_custom_workspace_context(ws)
+        assert len(context["learnings"]) == 2
+        # Should be ordered by confidence_score descending
+        assert context["learnings"][0].confidence_score == 0.9
+        assert context["learnings"][1].confidence_score == 0.8
+
+    def test_build_context_empty_workspace(self, owner):
+        from apps.agents.graph.base import _build_custom_workspace_context
+
+        ws = CustomWorkspace.objects.create(name="Empty WS", created_by=owner)
+
+        context = _build_custom_workspace_context(ws)
+        assert context["system_prompts"] == []
+        assert context["knowledge"] == []
+        assert context["learnings"] == []
+        assert context["available_tenants"] == []
+
+    def test_build_context_tenant_data_dictionary_flag(self, owner, tenant_workspace_a):
+        from apps.agents.graph.base import _build_custom_workspace_context
+
+        ws = CustomWorkspace.objects.create(name="Dict Test", created_by=owner)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+
+        context = _build_custom_workspace_context(ws)
+        assert len(context["available_tenants"]) == 1
+        assert context["available_tenants"][0]["has_data_dictionary"] is False
+
+        # Set data dictionary and verify
+        tenant_workspace_a.data_dictionary = {"tables": ["users"]}
+        tenant_workspace_a.save()
+
+        context = _build_custom_workspace_context(ws)
+        assert context["available_tenants"][0]["has_data_dictionary"] is True
