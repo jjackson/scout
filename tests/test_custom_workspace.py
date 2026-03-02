@@ -136,3 +136,40 @@ class TestWorkspaceMembership:
                 u = User.objects.create_user(email="viewer@example.com", password="viewerpass123")
             m = WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
             assert m.role == role
+
+
+@pytest.mark.django_db
+class TestKnowledgeDualFK:
+    def test_knowledge_entry_on_tenant_workspace(self, tenant_workspace_a):
+        from apps.knowledge.models import KnowledgeEntry
+
+        entry = KnowledgeEntry.objects.create(
+            workspace=tenant_workspace_a,
+            title="Tenant Knowledge",
+            content="Some content",
+        )
+        assert entry.workspace == tenant_workspace_a
+        assert entry.custom_workspace is None
+
+    def test_knowledge_entry_on_custom_workspace(self, owner):
+        from apps.knowledge.models import KnowledgeEntry
+
+        ws = CustomWorkspace.objects.create(name="Test", created_by=owner)
+        entry = KnowledgeEntry.objects.create(
+            custom_workspace=ws,
+            title="Custom Knowledge",
+            content="Some content",
+        )
+        assert entry.custom_workspace == ws
+        assert entry.workspace is None
+
+    def test_agent_learning_on_custom_workspace(self, owner):
+        from apps.knowledge.models import AgentLearning
+
+        ws = CustomWorkspace.objects.create(name="Test", created_by=owner)
+        learning = AgentLearning.objects.create(
+            custom_workspace=ws,
+            description="Test learning",
+        )
+        assert learning.custom_workspace == ws
+        assert learning.workspace is None
