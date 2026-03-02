@@ -1,7 +1,8 @@
 """Tests for schema context injection into the agent system prompt."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from apps.agents.graph.base import _fetch_schema_context
 
@@ -54,8 +55,18 @@ async def test_fetch_schema_context_active_compact(mock_tenant_membership):
     mock_ts.state = SchemaState.ACTIVE
 
     mock_tables = [
-        {"name": "cases", "description": "CommCare cases", "row_count": 1000, "materialized_at": "2026-03-02T10:00:00"},
-        {"name": "forms", "description": "CommCare forms", "row_count": 500, "materialized_at": "2026-03-02T10:00:00"},
+        {
+            "name": "cases",
+            "description": "CommCare cases",
+            "row_count": 1000,
+            "materialized_at": "2026-03-02T10:00:00",
+        },
+        {
+            "name": "forms",
+            "description": "CommCare forms",
+            "row_count": 500,
+            "materialized_at": "2026-03-02T10:00:00",
+        },
     ]
 
     # Full schema text that exceeds 6000 chars
@@ -90,17 +101,26 @@ async def test_fetch_schema_context_active_full(mock_tenant_membership):
     mock_ts.state = SchemaState.ACTIVE
 
     mock_tables = [
-        {"name": "cases", "description": "CommCare cases", "row_count": 100, "materialized_at": "2026-03-02T10:00:00"},
+        {
+            "name": "cases",
+            "description": "CommCare cases",
+            "row_count": 100,
+            "materialized_at": "2026-03-02T10:00:00",
+        },
     ]
 
-    small_column_text = "**cases** — CommCare cases (100 rows)\nColumns:\n- case_id (text)\n- closed (boolean)\n"
+    small_column_text = (
+        "**cases** — CommCare cases (100 rows)\nColumns:\n- case_id (text)\n- closed (boolean)\n"
+    )
 
     with (
         patch("apps.agents.graph.base.TenantSchema") as MockTS,
         patch("apps.agents.graph.base.get_registry") as mock_registry,
         patch("apps.agents.graph.base.sync_to_async") as mock_s2a,
         patch("apps.agents.graph.base._render_full_schema") as mock_full,
-        patch("apps.agents.graph.base.load_tenant_context", new=AsyncMock(return_value=MagicMock())),
+        patch(
+            "apps.agents.graph.base.load_tenant_context", new=AsyncMock(return_value=MagicMock())
+        ),
         patch("apps.projects.models.TenantMetadata") as MockTM,
     ):
         MockTS.objects.filter.return_value.afirst = AsyncMock(return_value=mock_ts)
