@@ -1,7 +1,7 @@
 """
-URL configuration for projects app.
+URL configuration for workspace app.
 """
 
-app_name = "projects"
+app_name = "workspace"
 
 urlpatterns = []
