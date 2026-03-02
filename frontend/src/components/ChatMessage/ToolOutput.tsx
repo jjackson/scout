@@ -359,7 +359,7 @@ function parseOutput(output: unknown): unknown {
 
 export function renderToolOutput(toolName: string, rawOutput: unknown): React.ReactNode | null {
   const output = parseOutput(rawOutput)
-  if (output == null) return null
+  if (output == null || typeof output !== "object") return null
 
   switch (toolName) {
     case "query":
