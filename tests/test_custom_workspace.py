@@ -1,0 +1,138 @@
+"""Tests for CustomWorkspace, CustomWorkspaceTenant, and WorkspaceMembership models."""
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.db import IntegrityError
+
+from apps.users.models import TenantMembership
+from apps.workspace.models import (
+    CustomWorkspace,
+    CustomWorkspaceTenant,
+    TenantWorkspace,
+    WorkspaceMembership,
+)
+
+User = get_user_model()
+
+
+@pytest.fixture
+def owner(db):
+    return User.objects.create_user(
+        email="owner@example.com",
+        password="ownerpass123",
+        first_name="Workspace",
+        last_name="Owner",
+    )
+
+
+@pytest.fixture
+def member(db):
+    return User.objects.create_user(
+        email="member@example.com",
+        password="memberpass123",
+        first_name="Workspace",
+        last_name="Member",
+    )
+
+
+@pytest.fixture
+def tenant_membership_a(db, owner):
+    return TenantMembership.objects.create(
+        user=owner,
+        provider="commcare",
+        tenant_id="domain-a",
+        tenant_name="Domain A",
+    )
+
+
+@pytest.fixture
+def tenant_membership_b(db, owner):
+    return TenantMembership.objects.create(
+        user=owner,
+        provider="commcare",
+        tenant_id="domain-b",
+        tenant_name="Domain B",
+    )
+
+
+@pytest.fixture
+def tenant_workspace_a(db):
+    return TenantWorkspace.objects.create(
+        tenant_id="domain-a",
+        tenant_name="Domain A",
+    )
+
+
+@pytest.fixture
+def tenant_workspace_b(db):
+    return TenantWorkspace.objects.create(
+        tenant_id="domain-b",
+        tenant_name="Domain B",
+    )
+
+
+@pytest.mark.django_db
+class TestCustomWorkspaceModel:
+    def test_create_custom_workspace(self, owner):
+        ws = CustomWorkspace.objects.create(
+            name="My Custom Workspace",
+            description="A workspace spanning multiple tenants",
+            created_by=owner,
+        )
+        assert ws.name == "My Custom Workspace"
+        assert ws.description == "A workspace spanning multiple tenants"
+        assert ws.created_by == owner
+        assert ws.system_prompt == ""
+        assert ws.id is not None
+        assert ws.created_at is not None
+        assert ws.updated_at is not None
+        assert str(ws) == "My Custom Workspace"
+
+    def test_add_tenants_to_workspace(self, owner, tenant_workspace_a, tenant_workspace_b):
+        ws = CustomWorkspace.objects.create(name="Multi-Tenant WS", created_by=owner)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_b)
+        assert ws.custom_workspace_tenants.count() == 2
+
+    def test_duplicate_tenant_rejected(self, owner, tenant_workspace_a):
+        ws = CustomWorkspace.objects.create(name="Dup Test WS", created_by=owner)
+        CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+        with pytest.raises(IntegrityError):
+            CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)
+
+
+@pytest.mark.django_db
+class TestWorkspaceMembership:
+    def test_create_membership(self, owner):
+        ws = CustomWorkspace.objects.create(name="Membership WS", created_by=owner)
+        membership = WorkspaceMembership.objects.create(
+            workspace=ws,
+            user=owner,
+            role="owner",
+            invited_by=None,
+        )
+        assert membership.workspace == ws
+        assert membership.user == owner
+        assert membership.role == "owner"
+        assert membership.invited_by is None
+        assert membership.joined_at is not None
+        assert str(membership) == f"{owner.email} - owner in Membership WS"
+
+    def test_duplicate_membership_rejected(self, owner):
+        ws = CustomWorkspace.objects.create(name="Dup Membership WS", created_by=owner)
+        WorkspaceMembership.objects.create(workspace=ws, user=owner, role="owner")
+        with pytest.raises(IntegrityError):
+            WorkspaceMembership.objects.create(workspace=ws, user=owner, role="editor")
+
+    def test_role_choices(self, owner, member):
+        ws = CustomWorkspace.objects.create(name="Roles WS", created_by=owner)
+        for role in ("owner", "editor", "viewer"):
+            # Use a fresh user for each role to avoid unique_together conflict
+            if role == "owner":
+                u = owner
+            elif role == "editor":
+                u = member
+            else:
+                u = User.objects.create_user(email="viewer@example.com", password="viewerpass123")
+            m = WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
+            assert m.role == role
