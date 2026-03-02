@@ -192,7 +192,9 @@ async def _fetch_schema_context(tenant_membership) -> str:
         if len(full_text) <= SCHEMA_CONTEXT_CHAR_BUDGET:
             return full_text
     except Exception:
-        logger.debug("Could not fetch full schema for context injection, using compact", exc_info=True)
+        logger.debug(
+            "Could not fetch full schema for context injection, using compact", exc_info=True
+        )
 
     # Fall back to compact
     return _render_compact_schema(tables, last_materialized_at)
@@ -494,10 +496,8 @@ async def _build_system_prompt(
     provider = tenant_membership.provider
     if provider == "commcare_connect":
         pipeline_name = "connect_sync"
-        data_label = "Connect"
     else:
         pipeline_name = "commcare_sync"
-        data_label = "CommCare"
 
     sections.append(f"""
 ## Tenant Context
