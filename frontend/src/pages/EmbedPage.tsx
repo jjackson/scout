@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useRef } from "react"
 import { RouterProvider, createBrowserRouter } from "react-router-dom"
 import { useAppStore } from "@/store/store"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -78,6 +78,18 @@ export function EmbedPage() {
     }
   }, [authStatus, sendEvent])
 
+  // Force a browser repaint when the switching overlay clears.
+  // Browsers can skip repaints in cross-origin iframes; this nudge
+  // ensures the overlay removal is visually flushed.
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!workspaceSwitching && wrapperRef.current) {
+      const el = wrapperRef.current
+      el.style.transform = "translateZ(0)"
+      requestAnimationFrame(() => { el.style.transform = "" })
+    }
+  }, [workspaceSwitching])
+
   // Auto-select tenant from URL param after authentication
   useEffect(() => {
     if (authStatus === "authenticated" && tenant) {
@@ -112,7 +124,7 @@ export function EmbedPage() {
   }
 
   return (
-    <div className="relative h-screen">
+    <div ref={wrapperRef} className="relative h-screen">
       <RouterProvider router={embedRouter} />
       {workspaceSwitching && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80">

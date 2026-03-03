@@ -202,7 +202,6 @@ export const createWorkspaceSlice: StateCreator<WorkspaceSlice, [], [], Workspac
     },
 
     ensureWorkspaceForTenant: async (tenantId: string) => {
-      set({ workspaceSwitching: true })
       try {
         const detail = await api.post<CustomWorkspaceDetail>(
           "/api/custom-workspaces/ensure-for-tenant/",
