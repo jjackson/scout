@@ -19,6 +19,5 @@ SECURE_SSL_REDIRECT = False
 # Scout is served under /scout/ path prefix on the ALB
 FORCE_SCRIPT_NAME = env("FORCE_SCRIPT_NAME", default="/scout")
 
-# Allow iframe embedding — the EmbedFrameOptionsMiddleware handles
-# per-route CSP headers, so remove the blanket DENY.
-X_FRAME_OPTIONS = None
+# Allow iframe embedding from labs.connect.dimagi.com (same origin)
+X_FRAME_OPTIONS = "SAMEORIGIN"

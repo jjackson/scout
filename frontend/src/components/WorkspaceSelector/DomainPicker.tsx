@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import type { TenantMembership } from "@/store/domainSlice"
+import { tenantDisplayName, type TenantMembership } from "@/store/domainSlice"
 
 interface DomainPickerProps {
   domains: TenantMembership[]
@@ -41,13 +41,13 @@ export function DomainPicker({
   const filteredCommcareDomains = useMemo(() => {
     if (!search) return commcareDomains
     const lower = search.toLowerCase()
-    return commcareDomains.filter((d) => d.tenant_name.toLowerCase().includes(lower))
+    return commcareDomains.filter((d) => tenantDisplayName(d).toLowerCase().includes(lower))
   }, [commcareDomains, search])
 
   const filteredConnectDomains = useMemo(() => {
     if (!search) return connectDomains
     const lower = search.toLowerCase()
-    return connectDomains.filter((d) => d.tenant_name.toLowerCase().includes(lower))
+    return connectDomains.filter((d) => tenantDisplayName(d).toLowerCase().includes(lower))
   }, [connectDomains, search])
 
   const tabs: { key: Tab; label: string; count: number }[] = [
@@ -156,7 +156,7 @@ function DomainList({
             data-testid={`workspace-domain-${d.tenant_id}`}
             className="flex w-full items-center rounded-md px-4 py-2.5 text-left text-sm transition-colors hover:bg-accent"
           >
-            {d.tenant_name}
+            {tenantDisplayName(d)}
           </button>
         ))}
       </div>
@@ -177,7 +177,7 @@ function DomainList({
             onChange={() => onToggle?.(d.tenant_id)}
             className="h-4 w-4 rounded border-input"
           />
-          {d.tenant_name}
+          {tenantDisplayName(d)}
         </label>
       ))}
     </div>
