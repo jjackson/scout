@@ -12,6 +12,7 @@ import {
   ChevronsUpDown,
 } from "lucide-react"
 import { useAppStore } from "@/store/store"
+import { tenantDisplayName } from "@/store/domainSlice"
 import { NavItem } from "./NavItem"
 import { TenantManagement } from "./TenantManagement"
 import { Button } from "@/components/ui/button"
@@ -40,7 +41,7 @@ export function Sidebar() {
     }
     if (activeDomainId) {
       const domain = domains.find((d) => d.id === activeDomainId)
-      return domain?.tenant_name ?? "Select Workspace"
+      return domain ? tenantDisplayName(domain) : "Select Workspace"
     }
     return "Select Workspace"
   })()
