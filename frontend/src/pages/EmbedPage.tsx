@@ -1,7 +1,6 @@
 import { useEffect, useCallback } from "react"
 import { RouterProvider, createBrowserRouter } from "react-router-dom"
 import { useAppStore } from "@/store/store"
-import { LoginForm } from "@/components/LoginForm/LoginForm"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmbedLayout } from "@/components/EmbedLayout/EmbedLayout"
 import { ChatPanel } from "@/components/ChatPanel/ChatPanel"
@@ -55,6 +54,15 @@ export function EmbedPage() {
 
   useEffect(() => {
     fetchMe()
+
+    // Re-check auth when the iframe regains visibility (e.g. after popup login)
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchMe()
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
+    return () => document.removeEventListener("visibilitychange", handleVisibility)
   }, [fetchMe])
 
   useEffect(() => {
@@ -85,7 +93,16 @@ export function EmbedPage() {
   }
 
   if (authStatus === "unauthenticated") {
-    return <LoginForm />
+    // Don't render OAuth links inside the iframe — they can't navigate to
+    // external OAuth providers due to X-Frame-Options restrictions.
+    // The parent page handles auth via a popup (scout:auth-required event).
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center text-muted-foreground">
+          <p className="text-sm">Authentication required</p>
+        </div>
+      </div>
+    )
   }
 
   return <RouterProvider router={embedRouter} />
