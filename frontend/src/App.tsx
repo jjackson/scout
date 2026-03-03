@@ -28,12 +28,22 @@ export default function App() {
   const relPath = appPath()
   const isPublicPage = /^\/shared\/(runs|threads)\/[^/]+\/?$/.test(relPath)
   const isEmbedPage = relPath.startsWith("/embed")
+  const isPopup = !!window.opener
 
   useEffect(() => {
     if (!isPublicPage && !isEmbedPage) {
       fetchMe()
     }
   }, [fetchMe, isPublicPage, isEmbedPage])
+
+  // If opened as a popup (e.g. for OAuth from the embed widget), close
+  // automatically once the user is authenticated so control returns to
+  // the parent page.
+  useEffect(() => {
+    if (isPopup && authStatus === "authenticated") {
+      window.close()
+    }
+  }, [isPopup, authStatus])
 
   if (isPublicPage) {
     return getPublicPageComponent()
