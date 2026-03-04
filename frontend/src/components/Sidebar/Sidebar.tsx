@@ -105,8 +105,8 @@ export function Sidebar() {
         <NavItem to={`${prefix}/artifacts`} icon={LayoutDashboard} label="Artifacts" />
         <NavItem to={`${prefix}/knowledge`} icon={BookOpen} label="Knowledge" />
         <NavItem to={`${prefix}/recipes`} icon={ChefHat} label="Recipes" />
-        {!isEmbed && <NavItem to="/data-dictionary" icon={Database} label="Data Dictionary" />}
-        {!isEmbed && <NavItem to="/settings/connections" icon={Link2} label="Connections" />}
+        <NavItem to={`${prefix}/data-dictionary`} icon={Database} label="Data Dictionary" />
+        <NavItem to={`${prefix}/settings/connections`} icon={Link2} label="Connections" />
       </nav>
 
       {/* Thread History */}

@@ -8,6 +8,8 @@ import { ChatPanel } from "@/components/ChatPanel/ChatPanel"
 import { ArtifactsPage } from "@/pages/ArtifactsPage"
 import { KnowledgePage } from "@/pages/KnowledgePage"
 import { RecipesPage } from "@/pages/RecipesPage"
+import { DataDictionaryPage } from "@/pages/DataDictionaryPage"
+import { ConnectionsPage } from "@/pages/ConnectionsPage"
 import { useEmbedMessaging } from "@/hooks/useEmbedMessaging"
 import { useAutoResize } from "@/hooks/useAutoResize"
 import { useEmbedParams } from "@/hooks/useEmbedParams"
@@ -26,6 +28,8 @@ const embedRouter = createBrowserRouter([
       { path: "knowledge/:id", element: <KnowledgePage /> },
       { path: "recipes", element: <RecipesPage /> },
       { path: "recipes/:id", element: <RecipesPage /> },
+      { path: "data-dictionary", element: <DataDictionaryPage /> },
+      { path: "settings/connections", element: <ConnectionsPage /> },
     ],
   },
 ], { basename: BASE_PATH || undefined })
