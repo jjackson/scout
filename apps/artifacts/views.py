@@ -389,6 +389,7 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
                                 return React.createElement('span', { ref: ref, style: { display: 'inline-flex', ...props.style } });
                             };
                         }
+                        // Pre-define common icons for convenience
                         const TrendingUp = _lucideIcon('TrendingUp');
                         const TrendingDown = _lucideIcon('TrendingDown');
                         const ShoppingCart = _lucideIcon('ShoppingCart');
@@ -400,6 +401,28 @@ SANDBOX_HTML_TEMPLATE = """<!DOCTYPE html>
                         const ArrowUp = _lucideIcon('ArrowUp');
                         const ArrowDown = _lucideIcon('ArrowDown');
                         const Star = _lucideIcon('Star');
+                        const Calendar = _lucideIcon('Calendar');
+                        const Clock = _lucideIcon('Clock');
+                        const MapPin = _lucideIcon('MapPin');
+                        const CheckCircle = _lucideIcon('CheckCircle');
+                        const XCircle = _lucideIcon('XCircle');
+                        const AlertTriangle = _lucideIcon('AlertTriangle');
+                        const Info = _lucideIcon('Info');
+                        const Search = _lucideIcon('Search');
+                        const Filter = _lucideIcon('Filter');
+                        const Download = _lucideIcon('Download');
+                        const Eye = _lucideIcon('Eye');
+                        const Heart = _lucideIcon('Heart');
+                        const Home = _lucideIcon('Home');
+                        const Settings = _lucideIcon('Settings');
+                        const ChevronRight = _lucideIcon('ChevronRight');
+                        const ChevronDown = _lucideIcon('ChevronDown');
+                        const ExternalLink = _lucideIcon('ExternalLink');
+                        const FileText = _lucideIcon('FileText');
+                        const Hash = _lucideIcon('Hash');
+                        const Percent = _lucideIcon('Percent');
+                        const Target = _lucideIcon('Target');
+                        const Zap = _lucideIcon('Zap');
 
                         ${transformed}
 
