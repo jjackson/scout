@@ -66,13 +66,20 @@ def _resolve_custom_workspace(request):
     Returns (custom_workspace, error_response). If the header is absent,
     returns (None, None) so callers can fall back to the tenant workspace path.
     """
+    from apps.workspace.api.views import _validate_tenant_access
     from apps.workspace.models import CustomWorkspace, WorkspaceMembership
 
     header_value = request.META.get("HTTP_X_CUSTOM_WORKSPACE")
     if not header_value:
         return None, None
 
-    workspace = CustomWorkspace.objects.filter(id=header_value).first()
+    try:
+        workspace = CustomWorkspace.objects.filter(id=header_value).first()
+    except (ValueError, Exception):
+        return None, Response(
+            {"error": "Invalid workspace ID."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     if not workspace:
         return None, Response(
             {"error": "Custom workspace not found."},
@@ -83,6 +90,14 @@ def _resolve_custom_workspace(request):
     if not WorkspaceMembership.objects.filter(workspace=workspace, user=request.user).exists():
         return None, Response(
             {"error": "Not a member of this workspace."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Verify user has TenantMembership for all member tenants
+    missing = _validate_tenant_access(request.user, workspace)
+    if missing:
+        return None, Response(
+            {"error": "Missing tenant access", "missing_tenants": missing},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -186,9 +201,7 @@ class KnowledgeListCreateView(APIView):
             page_size = DEFAULT_PAGE_SIZE
 
         if custom_workspace:
-            all_items = _get_custom_workspace_knowledge(
-                custom_workspace, type_filter, search_query
-            )
+            all_items = _get_custom_workspace_knowledge(custom_workspace, type_filter, search_query)
         else:
             workspace, err = _resolve_workspace(request)
             if err:
@@ -241,9 +254,17 @@ class KnowledgeListCreateView(APIView):
         )
 
     def post(self, request):
-        workspace, err = _resolve_workspace(request)
-        if err:
-            return err
+        # Check for custom workspace mode first
+        custom_workspace, cw_err = _resolve_custom_workspace(request)
+        if cw_err:
+            return cw_err
+
+        if not custom_workspace:
+            workspace, err = _resolve_workspace(request)
+            if err:
+                return err
+        else:
+            workspace = None
 
         item_type = request.data.get("type")
         if not item_type or item_type not in KNOWLEDGE_TYPES:
@@ -261,7 +282,10 @@ class KnowledgeListCreateView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        instance = serializer.save(workspace=workspace)
+        if custom_workspace:
+            instance = serializer.save(custom_workspace=custom_workspace)
+        else:
+            instance = serializer.save(workspace=workspace)
 
         if item_type == "entry":
             instance.created_by = request.user
@@ -283,22 +307,39 @@ class KnowledgeDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    def _find_item(self, workspace, item_id):
+    def _find_item(self, workspace, item_id, custom_workspace=None):
         for type_name, type_config in KNOWLEDGE_TYPES.items():
             model = type_config["model"]
             try:
-                item = model.objects.get(pk=item_id, workspace=workspace)
+                if custom_workspace:
+                    item = model.objects.get(pk=item_id, custom_workspace=custom_workspace)
+                else:
+                    item = model.objects.get(pk=item_id, workspace=workspace)
                 return item, type_name, type_config["serializer"]
             except model.DoesNotExist:
                 continue
         return None, None, None
 
-    def get(self, request, item_id):
+    def _resolve_workspace_or_custom(self, request):
+        """Resolve workspace from request, supporting custom workspace header."""
+        custom_workspace, cw_err = _resolve_custom_workspace(request)
+        if cw_err:
+            return None, None, cw_err
+        if custom_workspace:
+            return None, custom_workspace, None
         workspace, err = _resolve_workspace(request)
+        if err:
+            return None, None, err
+        return workspace, None, None
+
+    def get(self, request, item_id):
+        workspace, custom_workspace, err = self._resolve_workspace_or_custom(request)
         if err:
             return err
 
-        item, type_name, serializer_class = self._find_item(workspace, item_id)
+        item, type_name, serializer_class = self._find_item(
+            workspace, item_id, custom_workspace=custom_workspace
+        )
         if not item:
             return Response(
                 {"error": "Knowledge item not found."}, status=status.HTTP_404_NOT_FOUND
@@ -308,11 +349,13 @@ class KnowledgeDetailView(APIView):
         return Response(serializer.data)
 
     def put(self, request, item_id):
-        workspace, err = _resolve_workspace(request)
+        workspace, custom_workspace, err = self._resolve_workspace_or_custom(request)
         if err:
             return err
 
-        item, type_name, serializer_class = self._find_item(workspace, item_id)
+        item, type_name, serializer_class = self._find_item(
+            workspace, item_id, custom_workspace=custom_workspace
+        )
         if not item:
             return Response(
                 {"error": "Knowledge item not found."}, status=status.HTTP_404_NOT_FOUND
@@ -331,11 +374,13 @@ class KnowledgeDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, item_id):
-        workspace, err = _resolve_workspace(request)
+        workspace, custom_workspace, err = self._resolve_workspace_or_custom(request)
         if err:
             return err
 
-        item, type_name, serializer_class = self._find_item(workspace, item_id)
+        item, type_name, serializer_class = self._find_item(
+            workspace, item_id, custom_workspace=custom_workspace
+        )
         if not item:
             return Response(
                 {"error": "Knowledge item not found."}, status=status.HTTP_404_NOT_FOUND

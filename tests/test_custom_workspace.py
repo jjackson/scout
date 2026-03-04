@@ -180,7 +180,9 @@ class TestCustomWorkspaceContext:
     def test_build_context_aggregates_knowledge(
         self, owner, tenant_workspace_a, tenant_workspace_b
     ):
-        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.agents.graph.base import (
+            _build_custom_workspace_context_sync as _build_custom_workspace_context,
+        )
         from apps.knowledge.models import KnowledgeEntry
 
         ws = CustomWorkspace.objects.create(name="Context Test", created_by=owner)
@@ -204,7 +206,9 @@ class TestCustomWorkspaceContext:
         assert len(context["available_tenants"]) == 2
 
     def test_build_context_aggregates_system_prompts(self, owner, tenant_workspace_a):
-        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.agents.graph.base import (
+            _build_custom_workspace_context_sync as _build_custom_workspace_context,
+        )
 
         tenant_workspace_a.system_prompt = "Tenant prompt"
         tenant_workspace_a.save()
@@ -220,7 +224,9 @@ class TestCustomWorkspaceContext:
         assert "Tenant prompt" in context["system_prompts"][1]
 
     def test_build_context_aggregates_learnings(self, owner, tenant_workspace_a):
-        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.agents.graph.base import (
+            _build_custom_workspace_context_sync as _build_custom_workspace_context,
+        )
         from apps.knowledge.models import AgentLearning
 
         ws = CustomWorkspace.objects.create(name="Learning Test", created_by=owner)
@@ -254,7 +260,9 @@ class TestCustomWorkspaceContext:
         assert context["learnings"][1].confidence_score == 0.8
 
     def test_build_context_empty_workspace(self, owner):
-        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.agents.graph.base import (
+            _build_custom_workspace_context_sync as _build_custom_workspace_context,
+        )
 
         ws = CustomWorkspace.objects.create(name="Empty WS", created_by=owner)
 
@@ -265,7 +273,9 @@ class TestCustomWorkspaceContext:
         assert context["available_tenants"] == []
 
     def test_build_context_tenant_data_dictionary_flag(self, owner, tenant_workspace_a):
-        from apps.agents.graph.base import _build_custom_workspace_context
+        from apps.agents.graph.base import (
+            _build_custom_workspace_context_sync as _build_custom_workspace_context,
+        )
 
         ws = CustomWorkspace.objects.create(name="Dict Test", created_by=owner)
         CustomWorkspaceTenant.objects.create(workspace=ws, tenant_workspace=tenant_workspace_a)

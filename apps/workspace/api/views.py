@@ -661,7 +661,9 @@ class CustomWorkspaceTenantListCreateView(APIView):
             )
 
         if not tw:
-            raise ValidationError("Tenant workspace not found. Provide tenant_workspace_id or tenant_id.")
+            raise ValidationError(
+                "Tenant workspace not found. Provide tenant_workspace_id or tenant_id."
+            )
 
         if not TenantMembership.objects.filter(user=request.user, tenant_id=tw.tenant_id).exists():
             raise ValidationError("You don't have access to this tenant.")
@@ -754,6 +756,18 @@ class WorkspaceMemberDetailView(APIView):
 
         role = request.data.get("role")
         if role and role in ["owner", "editor", "viewer"]:
+            # Prevent demoting the last owner
+            if membership.role == "owner" and role != "owner":
+                remaining = (
+                    WorkspaceMembership.objects.filter(workspace=workspace, role="owner")
+                    .exclude(id=member_id)
+                    .exists()
+                )
+                if not remaining:
+                    return Response(
+                        {"error": "Cannot demote the last owner of a workspace."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
             membership.role = role
             membership.save(update_fields=["role"])
 
@@ -766,9 +780,24 @@ class WorkspaceMemberDetailView(APIView):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         _check_workspace_role(request.user, workspace, ["owner"])
 
-        deleted, _ = WorkspaceMembership.objects.filter(workspace=workspace, id=member_id).delete()
-        if not deleted:
+        membership = WorkspaceMembership.objects.filter(workspace=workspace, id=member_id).first()
+        if not membership:
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Prevent removing the last owner
+        if membership.role == "owner":
+            remaining = (
+                WorkspaceMembership.objects.filter(workspace=workspace, role="owner")
+                .exclude(id=member_id)
+                .exists()
+            )
+            if not remaining:
+                return Response(
+                    {"error": "Cannot remove the last owner of a workspace."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        membership.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -791,9 +820,7 @@ class EnsureWorkspaceForTenantView(APIView):
             )
 
         # Verify user has TenantMembership for this tenant
-        membership = TenantMembership.objects.filter(
-            user=request.user, tenant_id=tenant_id
-        ).first()
+        membership = TenantMembership.objects.filter(user=request.user, tenant_id=tenant_id).first()
         if not membership:
             return Response(
                 {"error": "No access to this tenant."},
@@ -838,9 +865,7 @@ class EnsureWorkspaceForTenantView(APIView):
             created_by=request.user,
         )
         CustomWorkspaceTenant.objects.create(workspace=workspace, tenant_workspace=tw)
-        WorkspaceMembership.objects.create(
-            workspace=workspace, user=request.user, role="owner"
-        )
+        WorkspaceMembership.objects.create(workspace=workspace, user=request.user, role="owner")
 
         serializer = CustomWorkspaceDetailSerializer(workspace)
         return Response(serializer.data, status=status.HTTP_201_CREATED)

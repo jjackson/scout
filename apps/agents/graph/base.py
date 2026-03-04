@@ -522,14 +522,8 @@ When results are truncated, suggest adding filters or using aggregations to redu
     return "\n".join(sections)
 
 
-def _build_custom_workspace_context(workspace):
-    """Build aggregated agent context for a CustomWorkspace.
-
-    Collects system prompts, knowledge entries, and agent learnings from all
-    member TenantWorkspaces plus workspace-specific additions.  Returns a dict
-    suitable for downstream prompt assembly when the agent operates within a
-    CustomWorkspace.
-    """
+def _build_custom_workspace_context_sync(workspace):
+    """Synchronous implementation — use ``_build_custom_workspace_context`` from async code."""
     from django.db.models import Q
 
     from apps.knowledge.models import AgentLearning, KnowledgeEntry
@@ -578,7 +572,22 @@ def _build_custom_workspace_context(workspace):
     }
 
 
+async def _build_custom_workspace_context(workspace):
+    """Build aggregated agent context for a CustomWorkspace.
+
+    Collects system prompts, knowledge entries, and agent learnings from all
+    member TenantWorkspaces plus workspace-specific additions.  Returns a dict
+    suitable for downstream prompt assembly when the agent operates within a
+    CustomWorkspace.
+
+    This is an async wrapper around the synchronous ORM implementation to avoid
+    blocking the event loop when called from ASGI/LangGraph async code.
+    """
+    return await sync_to_async(_build_custom_workspace_context_sync)(workspace)
+
+
 __all__ = [
     "build_agent_graph",
     "_build_custom_workspace_context",
+    "_build_custom_workspace_context_sync",
 ]

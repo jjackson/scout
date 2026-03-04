@@ -93,7 +93,8 @@ class TableKnowledge(models.Model):
         verbose_name_plural = "Table knowledge"
 
     def __str__(self):
-        return f"{self.table_name} ({self.workspace.tenant_name})"
+        label = self.workspace.tenant_name if self.workspace else self.custom_workspace.name
+        return f"{self.table_name} ({label})"
 
 
 class KnowledgeEntry(models.Model):
@@ -143,7 +144,8 @@ class KnowledgeEntry(models.Model):
         verbose_name_plural = "Knowledge entries"
 
     def __str__(self):
-        return f"{self.title} ({self.workspace.tenant_name})"
+        label = self.workspace.tenant_name if self.workspace else self.custom_workspace.name
+        return f"{self.title} ({label})"
 
 
 class AgentLearning(models.Model):
