@@ -323,6 +323,12 @@ def disconnect_provider_view(request, provider_id):
         credential__credential_type=TenantCredential.OAUTH,
     ).delete()
 
+    # Clear the tenant resolution cache so the next /api/auth/tenants/ call
+    # triggers a fresh resolution (e.g. after reconnecting a provider).
+    from django.core.cache import cache
+
+    cache.delete(f"tenant_resolved:{request.user.pk}")
+
     return JsonResponse({"status": "disconnected"})
 
 
