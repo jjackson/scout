@@ -342,7 +342,7 @@ async def build_agent_graph(
 
     # --- Define graph nodes ---
 
-    def agent_node(state: AgentState) -> dict[str, Any]:
+    async def agent_node(state: AgentState) -> dict[str, Any]:
         """
         Call the LLM with the current conversation and system prompt.
 
@@ -353,7 +353,7 @@ async def build_agent_graph(
         # Filter out any prior system messages to avoid duplicates across cycles
         state_messages = [m for m in state_messages if not isinstance(m, SystemMessage)]
         messages = [SystemMessage(content=system_prompt)] + state_messages
-        response = llm_with_tools.invoke(messages)
+        response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
     def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
@@ -504,7 +504,7 @@ async def _build_system_prompt(
         sections.append(f"\n## Tenant-Specific Instructions\n\n{workspace.system_prompt}\n")
 
     retriever = KnowledgeRetriever(workspace)
-    knowledge_context = await sync_to_async(retriever.retrieve)()
+    knowledge_context = await retriever.retrieve()
     if knowledge_context:
         sections.append(f"\n## Knowledge Base\n\n{knowledge_context}\n")
 
@@ -537,14 +537,8 @@ When results are truncated, suggest adding filters or using aggregations to redu
     return "\n".join(sections)
 
 
-def _build_custom_workspace_context(workspace):
-    """Build aggregated agent context for a CustomWorkspace.
-
-    Collects system prompts, knowledge entries, and agent learnings from all
-    member TenantWorkspaces plus workspace-specific additions.  Returns a dict
-    suitable for downstream prompt assembly when the agent operates within a
-    CustomWorkspace.
-    """
+def _build_custom_workspace_context_sync(workspace):
+    """Synchronous implementation — use ``_build_custom_workspace_context`` from async code."""
     from django.db.models import Q
 
     from apps.knowledge.models import AgentLearning, KnowledgeEntry
@@ -593,7 +587,22 @@ def _build_custom_workspace_context(workspace):
     }
 
 
+async def _build_custom_workspace_context(workspace):
+    """Build aggregated agent context for a CustomWorkspace.
+
+    Collects system prompts, knowledge entries, and agent learnings from all
+    member TenantWorkspaces plus workspace-specific additions.  Returns a dict
+    suitable for downstream prompt assembly when the agent operates within a
+    CustomWorkspace.
+
+    This is an async wrapper around the synchronous ORM implementation to avoid
+    blocking the event loop when called from ASGI/LangGraph async code.
+    """
+    return await sync_to_async(_build_custom_workspace_context_sync)(workspace)
+
+
 __all__ = [
     "build_agent_graph",
     "_build_custom_workspace_context",
+    "_build_custom_workspace_context_sync",
 ]
