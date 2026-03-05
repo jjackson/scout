@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useEmbedParams } from "@/hooks/useEmbedParams"
+import { BASE_PATH } from "@/config"
 
 interface OAuthProvider {
   id: string
@@ -25,6 +27,8 @@ interface ApiKeyDomain {
 type FormMode = "hidden" | "add" | { editing: ApiKeyDomain }
 
 export function ConnectionsPage() {
+  const { isEmbed } = useEmbedParams()
+  const prefix = isEmbed ? "/embed" : ""
   const fetchStoreDomains = useAppStore((s) => s.domainActions.fetchDomains)
   const setActiveDomain = useAppStore((s) => s.domainActions.setActiveDomain)
   const activeDomainId = useAppStore((s) => s.activeDomainId)
@@ -454,7 +458,7 @@ export function ConnectionsPage() {
                   </Button>
                 ) : (
                   <Button variant="outline" size="sm" asChild data-testid={`connect-${provider.id}`}>
-                    <a href={`${provider.login_url}?process=connect&next=/settings/connections`}>
+                    <a href={`${provider.login_url}?process=connect&next=${BASE_PATH}${prefix}/settings/connections`}>
                       {provider.status === "expired" ? "Reconnect" : "Connect"}
                     </a>
                   </Button>
