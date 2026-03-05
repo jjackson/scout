@@ -457,10 +457,24 @@ export function ConnectionsPage() {
                     {disconnecting === provider.id ? "Disconnecting..." : "Disconnect"}
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" asChild data-testid={`connect-${provider.id}`}>
-                    <a href={`${provider.login_url}?process=connect&next=${BASE_PATH}${prefix}/settings/connections`}>
-                      {provider.status === "expired" ? "Reconnect" : "Connect"}
-                    </a>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid={`connect-${provider.id}`}
+                    onClick={() => {
+                      const url = `${provider.login_url}?process=connect&next=${BASE_PATH}${prefix}/settings/connections`
+                      const popup = window.open(url, "scout-oauth", "width=600,height=700")
+                      const check = setInterval(() => {
+                        if (popup && popup.closed) {
+                          clearInterval(check)
+                          fetchProviders()
+                          fetchDomains()
+                          void fetchStoreDomains()
+                        }
+                      }, 500)
+                    }}
+                  >
+                    {provider.status === "expired" ? "Reconnect" : "Connect"}
                   </Button>
                 )}
               </CardContent>
