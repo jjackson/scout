@@ -73,7 +73,7 @@
     this.iframe = document.createElement("iframe");
     this.iframe.src = src;
     this.iframe.style.cssText =
-      "width:100%;height:100%;border:none;display:block;";
+      "flex:1;width:100%;border:none;display:block;";
     this.iframe.setAttribute("allow", "clipboard-write");
     this.iframe.setAttribute("title", "Scout");
 
@@ -93,6 +93,8 @@
     }.bind(this);
 
     this.container.innerHTML = "";
+    this.container.style.display = "flex";
+    this.container.style.flexDirection = "column";
     this.container.appendChild(this.iframe);
 
     instances[this.id] = this;
@@ -109,8 +111,8 @@
     }
 
     if (data.type === "scout:resize" && typeof data.height === "number") {
-      if (this.opts.autoResize !== false && this.iframe) {
-        this.iframe.style.minHeight = data.height + "px";
+      if (this.opts.autoResize !== false && this.container) {
+        this.container.style.minHeight = data.height + "px";
       }
     }
 
