@@ -73,7 +73,7 @@
     this.iframe = document.createElement("iframe");
     this.iframe.src = src;
     this.iframe.style.cssText =
-      "flex:1;width:100%;border:none;display:block;";
+      "position:absolute;top:0;left:0;width:100%;height:100%;border:none;";
     this.iframe.setAttribute("allow", "clipboard-write");
     this.iframe.setAttribute("title", "Scout");
 
@@ -93,8 +93,7 @@
     }.bind(this);
 
     this.container.innerHTML = "";
-    this.container.style.display = "flex";
-    this.container.style.flexDirection = "column";
+    this.container.style.position = "relative";
     this.container.appendChild(this.iframe);
 
     instances[this.id] = this;
