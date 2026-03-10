@@ -30,6 +30,7 @@ from apps.agents.mcp_client import get_mcp_tools, get_user_oauth_tokens
 from apps.agents.memory.checkpointer import get_database_url
 from apps.chat.models import Thread
 from apps.chat.stream import langgraph_to_ui_stream
+from apps.projects.services.workspace_service import touch_workspace_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -427,9 +428,13 @@ def _upsert_thread(thread_id, user, title, *, workspace):
 
 @sync_to_async
 def _resolve_workspace_and_membership(user, workspace_id):
-    """Resolve Workspace and TenantMembership from workspace_id.
+    """Resolve workspace access for a user.
 
-    Returns (workspace, tenant_membership) or (None, None) if access denied.
+    Returns (workspace, tenant_membership, is_multi_tenant):
+    - (None, None, False): workspace not found or user lacks WorkspaceMembership
+    - (workspace, None, True): multi-tenant workspace; WorkspaceMembership is sufficient
+    - (workspace, None, False): single-tenant workspace but user lacks TenantMembership
+    - (workspace, tm, False): single-tenant workspace with a valid TenantMembership
     """
     from apps.projects.models import WorkspaceMembership
 
@@ -438,20 +443,28 @@ def _resolve_workspace_and_membership(user, workspace_id):
             workspace_id=workspace_id, user=user
         )
     except WorkspaceMembership.DoesNotExist:
-        return None, None
+        return None, None, False
 
     workspace = wm.workspace
-    # For the agent, resolve a TenantMembership via the workspace's tenants
+
+    # Read tenant count exactly once so callers don't need a second DB query.
+    # Multi-tenant workspaces grant access by WorkspaceMembership alone;
+    # TenantMembership is irrelevant (and must not be checked) for multi-tenant access.
+    is_multi_tenant = workspace.workspace_tenants.count() > 1
+    if is_multi_tenant:
+        return workspace, None, True
+
+    tenant = workspace.tenant
+    if tenant is None:
+        return workspace, None, False
+
     from apps.users.models import TenantMembership
 
-    tenant = workspace.tenant  # single-tenant compat
-    if tenant is None:
-        return workspace, None
     try:
-        tm = TenantMembership.objects.select_related("tenant").get(user=user, tenant=tenant)
+        tm = TenantMembership.objects.get(user=user, tenant=tenant)
     except TenantMembership.DoesNotExist:
-        return workspace, None
-    return workspace, tm
+        return workspace, None, False
+    return workspace, tm, False
 
 
 @sync_to_async
@@ -586,11 +599,13 @@ async def chat_view(request):
             {"error": f"Message exceeds {MAX_MESSAGE_LENGTH} characters"}, status=400
         )
 
-    # Resolve workspace and tenant membership
-    workspace, tenant_membership = await _resolve_workspace_and_membership(user, workspace_id)
+    # Resolve workspace and verify access. The multi-tenant flag is determined
+    # in a single DB read inside _resolve_workspace_and_membership to avoid TOCTOU.
+    workspace, tm, is_multi_tenant = await _resolve_workspace_and_membership(user, workspace_id)
     if workspace is None:
         return JsonResponse({"error": "Workspace not found or access denied"}, status=403)
-    if tenant_membership is None:
+
+    if tm is None and not is_multi_tenant:
         return JsonResponse({"error": "No tenant membership for this workspace"}, status=403)
 
     # Record thread metadata (fire-and-forget on error)
@@ -604,15 +619,8 @@ async def chat_view(request):
     except Exception:
         logger.warning("Failed to upsert thread %s", thread_id, exc_info=True)
 
-    # Touch the schema to reset inactivity TTL on user-initiated chat
-    from apps.projects.models import SchemaState, TenantSchema
-
-    ts = await TenantSchema.objects.filter(
-        tenant=tenant_membership.tenant,
-        state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
-    ).afirst()
-    if ts is not None:
-        await sync_to_async(ts.touch)()
+    # Touch the schema to reset inactivity TTL on user-initiated chat.
+    await touch_workspace_schemas(workspace)
 
     # Load MCP tools; attach progress callback for run_materialization updates.
     progress_queue: asyncio.Queue = asyncio.Queue()
@@ -641,7 +649,7 @@ async def chat_view(request):
     try:
         checkpointer = await _ensure_checkpointer()
         agent = await build_agent_graph(
-            tenant_membership=tenant_membership,
+            workspace=workspace,
             user=user,
             checkpointer=checkpointer,
             mcp_tools=mcp_tools,
@@ -653,7 +661,7 @@ async def chat_view(request):
             logger.info("Retrying agent build with fresh checkpointer")
             checkpointer = await _ensure_checkpointer(force_new=True)
             agent = await build_agent_graph(
-                tenant_membership=tenant_membership,
+                workspace=workspace,
                 user=user,
                 checkpointer=checkpointer,
                 mcp_tools=mcp_tools,
@@ -671,9 +679,7 @@ async def chat_view(request):
 
     input_state = {
         "messages": [HumanMessage(content=user_content)],
-        "tenant_id": tenant_membership.tenant.external_id,
-        "tenant_name": tenant_membership.tenant.canonical_name,
-        "tenant_membership_id": str(tenant_membership.id),
+        "workspace_id": str(workspace.id),
         "user_id": str(user.id),
         "user_role": "analyst",
         "needs_correction": False,
@@ -689,10 +695,13 @@ async def chat_view(request):
     # Attach Langfuse tracing callback if configured
     from apps.agents.tracing import get_langfuse_callback, langfuse_trace_context
 
+    trace_metadata = {
+        "workspace_id": str(workspace.id),
+    }
     langfuse_handler = get_langfuse_callback(
         session_id=str(thread_id),
         user_id=str(user.id),
-        metadata={"tenant_id": tenant_membership.tenant.external_id},
+        metadata=trace_metadata,
     )
     if langfuse_handler is not None:
         config["callbacks"] = [langfuse_handler]
@@ -700,7 +709,7 @@ async def chat_view(request):
     trace_ctx = langfuse_trace_context(
         session_id=str(thread_id),
         user_id=str(user.id),
-        metadata={"tenant_id": tenant_membership.tenant.external_id},
+        metadata=trace_metadata,
     )
 
     async def _traced_stream():
@@ -824,7 +833,7 @@ async def thread_messages_view(request, workspace_id, thread_id):
     if user is None:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    workspace, _ = await _resolve_workspace_and_membership(user, workspace_id)
+    workspace, _, _is_multi = await _resolve_workspace_and_membership(user, workspace_id)
     if workspace is None:
         return JsonResponse({"error": "Workspace not found or access denied"}, status=403)
 
@@ -863,7 +872,7 @@ async def thread_share_view(request, workspace_id, thread_id):
     if user is None:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    workspace, _ = await _resolve_workspace_and_membership(user, workspace_id)
+    workspace, _, _is_multi = await _resolve_workspace_and_membership(user, workspace_id)
     if workspace is None:
         return JsonResponse({"error": "Workspace not found or access denied"}, status=403)
 

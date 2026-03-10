@@ -82,43 +82,6 @@ class MaterializationRun(models.Model):
         return f"{self.pipeline} - {self.state}"
 
 
-class TenantWorkspace(models.Model):
-    """Per-tenant workspace holding agent config and serving as FK target for workspace models."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tenant = models.OneToOneField(
-        "users.Tenant",
-        on_delete=models.CASCADE,
-        related_name="workspace",
-    )
-    system_prompt = models.TextField(
-        blank=True,
-        help_text="Tenant-specific system prompt. Merged with the base agent prompt.",
-    )
-    data_dictionary = models.JSONField(
-        null=True,
-        blank=True,
-        help_text="Auto-generated schema documentation.",
-    )
-    data_dictionary_generated_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["tenant__canonical_name"]
-
-    def __str__(self):
-        return f"TenantWorkspace({self.tenant_id})"
-
-    @property
-    def external_tenant_id(self):
-        return self.tenant.external_id
-
-    @property
-    def tenant_name(self):
-        return self.tenant.canonical_name
-
-
 class WorkspaceRole(models.TextChoices):
     READ = "read", "Read"
     READ_WRITE = "read_write", "Read/Write"
@@ -147,7 +110,7 @@ class Workspace(models.Model):
         related_name="+",
     )
     system_prompt = models.TextField(blank=True)
-    # Legacy fields carried over from TenantWorkspace for backward compat
+    # Legacy fields retained from the original per-tenant workspace model
     data_dictionary = models.JSONField(null=True, blank=True)
     data_dictionary_generated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -180,6 +143,7 @@ class Workspace(models.Model):
 class WorkspaceTenant(models.Model):
     """Junction table linking a Workspace to a Tenant."""
 
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="workspace_tenants"
     )
@@ -216,6 +180,42 @@ class WorkspaceMembership(models.Model):
 
     def __str__(self):
         return f"{self.user.email} in {self.workspace.name} ({self.role})"
+
+
+class WorkspaceViewSchema(models.Model):
+    """Tracks the PostgreSQL view schema for a multi-tenant workspace.
+
+    For workspaces with 2+ tenants, a physical PostgreSQL schema is created
+    containing UNION ALL views that merge the per-tenant schemas.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="view_schema",
+    )
+    schema_name = models.CharField(max_length=255, unique=True)
+    state = models.CharField(
+        max_length=20,
+        choices=SchemaState.choices,
+        default=SchemaState.PROVISIONING,
+    )
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"ViewSchema({self.schema_name}, {self.state})"
+
+    def touch(self):
+        """Reset the inactivity TTL for this view schema."""
+        from django.utils import timezone
+
+        self.last_accessed_at = timezone.now()
+        self.save(update_fields=["last_accessed_at"])
 
 
 class TenantMetadata(models.Model):

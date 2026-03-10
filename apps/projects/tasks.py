@@ -5,9 +5,9 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
-from django.db import transaction
 from django.utils import timezone
 
+from apps.projects.services.schema_manager import SchemaManager
 from apps.users.services.credential_resolver import resolve_credential
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,6 @@ def refresh_tenant_schema(schema_id: str, membership_id: str) -> dict:
 def _drop_schema_and_fail(schema) -> None:
     """Drop the physical schema and mark the record as FAILED."""
     from apps.projects.models import SchemaState
-    from apps.projects.services.schema_manager import SchemaManager
 
     try:
         SchemaManager().teardown(schema)
@@ -105,21 +104,87 @@ def _drop_schema_and_fail(schema) -> None:
 def expire_inactive_schemas() -> None:
     """Mark stale schemas for teardown and dispatch teardown tasks.
 
-    Schemas with last_accessed_at older than SCHEMA_TTL_HOURS are expired.
+    Handles both TenantSchema and WorkspaceViewSchema records.
     Schemas with null last_accessed_at are never auto-expired.
     """
-    from apps.projects.models import SchemaState, TenantSchema
+    from apps.projects.models import SchemaState, TenantSchema, WorkspaceViewSchema
 
     cutoff = timezone.now() - timedelta(hours=settings.SCHEMA_TTL_HOURS)
-    stale = TenantSchema.objects.filter(
+
+    # Expire stale tenant schemas
+    stale_tenant = TenantSchema.objects.filter(
         state=SchemaState.ACTIVE,
         last_accessed_at__lt=cutoff,
     )
-    for schema in stale:
+    for schema in stale_tenant:
         schema.state = SchemaState.TEARDOWN
         schema.save(update_fields=["state"])
-        schema_id = str(schema.id)
-        transaction.on_commit(lambda sid=schema_id: teardown_schema.delay(sid))
+        teardown_schema.delay_on_commit(str(schema.id))
+
+    # Expire stale view schemas
+    stale_views = WorkspaceViewSchema.objects.filter(
+        state=SchemaState.ACTIVE,
+        last_accessed_at__lt=cutoff,
+    )
+    for vs in stale_views:
+        vs.state = SchemaState.TEARDOWN
+        vs.save(update_fields=["state"])
+        teardown_view_schema_task.delay_on_commit(str(vs.id))
+
+
+@shared_task
+def rebuild_workspace_view_schema(workspace_id: str) -> dict:
+    """Build (or rebuild) the UNION ALL view schema for a multi-tenant workspace.
+
+    On success: marks WorkspaceViewSchema.state = ACTIVE.
+    On failure: marks state = FAILED and returns an error dict.
+    """
+    from apps.projects.models import Workspace
+
+    try:
+        workspace = Workspace.objects.prefetch_related("tenants").get(id=workspace_id)
+    except Workspace.DoesNotExist:
+        logger.error("rebuild_workspace_view_schema: workspace %s not found", workspace_id)
+        return {"error": "Workspace not found"}
+
+    try:
+        vs = SchemaManager().build_view_schema(workspace)
+    except Exception:
+        # build_view_schema already saves state=FAILED before re-raising;
+        # no need to write it again here (doing so risks overwriting a
+        # concurrent state transition, e.g. TEARDOWN set by expire_inactive_schemas).
+        logger.exception("Failed to build view schema for workspace %s", workspace_id)
+        return {"error": "Failed to build view schema"}
+
+    logger.info(
+        "View schema '%s' is now active for workspace %s",
+        vs.schema_name,
+        workspace_id,
+    )
+    return {"status": "active", "schema_name": vs.schema_name}
+
+
+@shared_task
+def teardown_view_schema_task(view_schema_id: str) -> None:
+    """Drop the physical PostgreSQL schema for a WorkspaceViewSchema and mark EXPIRED."""
+    from apps.projects.models import SchemaState, WorkspaceViewSchema
+
+    try:
+        vs = WorkspaceViewSchema.objects.get(id=view_schema_id)
+    except WorkspaceViewSchema.DoesNotExist:
+        logger.error("teardown_view_schema_task: view schema %s not found", view_schema_id)
+        return
+
+    try:
+        SchemaManager().teardown_view_schema(vs)
+    except Exception:
+        logger.exception("Failed to drop view schema '%s'", vs.schema_name)
+        vs.state = SchemaState.ACTIVE
+        vs.save(update_fields=["state"])
+        raise
+
+    vs.state = SchemaState.EXPIRED
+    vs.save(update_fields=["state"])
 
 
 @shared_task

@@ -1,5 +1,6 @@
 """Workspace management API views."""
 
+from django.core.exceptions import ValidationError
 from django.db.models import Count
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -13,6 +14,7 @@ from apps.projects.models import (
     WorkspaceMembership,
     WorkspaceRole,
     WorkspaceTenant,
+    WorkspaceViewSchema,
 )
 from apps.projects.workspace_resolver import resolve_workspace
 from apps.users.models import Tenant, TenantMembership
@@ -147,6 +149,14 @@ class WorkspaceDetailView(APIView):
             schema_status = "provisioning"
         else:
             schema_status = "unavailable"
+
+        # Multi-tenant workspaces track readiness via WorkspaceViewSchema
+        if len(tenants) > 1:
+            try:
+                vs = workspace.view_schema
+                schema_status = "available" if vs.state == SchemaState.ACTIVE else "provisioning"
+            except WorkspaceViewSchema.DoesNotExist:
+                schema_status = "provisioning"
 
         return Response(
             {
@@ -315,4 +325,84 @@ class WorkspaceMemberDetailView(APIView):
         Thread.objects.filter(workspace=workspace, user=target.user).delete()
 
         target.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WorkspaceTenantView(APIView):
+    """
+    POST   /api/workspaces/<workspace_id>/tenants/         — add tenant (manage only)
+    DELETE /api/workspaces/<workspace_id>/tenants/<wt_id>/ — remove tenant (manage only)
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, workspace_id):
+        from apps.projects.services.workspace_service import add_workspace_tenant
+
+        workspace, membership, err = resolve_workspace(request, workspace_id)
+        if err:
+            return err
+        if membership.role != WorkspaceRole.MANAGE:
+            return Response(
+                {"error": "Only workspace managers can add tenants."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tenant_id = request.data.get("tenant_id")
+        if not tenant_id:
+            return Response({"error": "tenant_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            return Response(
+                {"error": "Tenant not found or not accessible."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate the requesting user has access to this tenant (always, before idempotency check)
+        if not TenantMembership.objects.filter(user=request.user, tenant=tenant).exists():
+            return Response(
+                {"error": "You do not have access to this tenant."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        wt, created = add_workspace_tenant(workspace, tenant)
+        if not created:
+            return Response(
+                {
+                    "id": str(wt.id),
+                    "tenant_id": str(tenant.id),
+                    "tenant_name": tenant.canonical_name,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"id": str(wt.id), "tenant_id": str(tenant.id), "tenant_name": tenant.canonical_name},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    def delete(self, request, workspace_id, wt_id):
+        from apps.projects.services.workspace_service import remove_workspace_tenant
+
+        workspace, membership, err = resolve_workspace(request, workspace_id)
+        if err:
+            return err
+        if membership.role != WorkspaceRole.MANAGE:
+            return Response(
+                {"error": "Only workspace managers can remove tenants."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            wt = WorkspaceTenant.objects.get(id=wt_id, workspace=workspace)
+        except WorkspaceTenant.DoesNotExist:
+            return Response(
+                {"error": "Tenant not found in workspace."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            remove_workspace_tenant(workspace, wt)
+        except ValidationError as e:
+            return Response({"error": e.message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)

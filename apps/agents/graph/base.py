@@ -49,8 +49,8 @@ from mcp_server.services.metadata import pipeline_describe_table, pipeline_list_
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
 
-    from apps.projects.models import TenantWorkspace
-    from apps.users.models import TenantMembership, User
+    from apps.projects.models import Workspace
+    from apps.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -127,23 +127,20 @@ def _render_full_schema(
     return "\n".join(lines)
 
 
-async def _fetch_schema_context(tenant_membership) -> str:
+async def _fetch_schema_context(tenant, user) -> str:
     """Fetch database schema state and build a ## Data Availability prompt section.
 
     Tries to build a full schema block (tables + columns). Falls back to a compact
     block (tables + row counts only) if the full text exceeds SCHEMA_CONTEXT_CHAR_BUDGET.
     """
     ts = await TenantSchema.objects.filter(
-        tenant=tenant_membership.tenant,
+        tenant=tenant,
         state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
     ).afirst()
 
+    pipeline_name = "connect_sync" if tenant.provider == "commcare_connect" else "commcare_sync"
+
     if ts is None:
-        provider = tenant_membership.tenant.provider
-        if provider == "commcare_connect":
-            pipeline_name = "connect_sync"
-        else:
-            pipeline_name = "commcare_sync"
         return (
             "No data has been loaded yet. "
             f'Call `run_materialization` with `pipeline="{pipeline_name}"` to load data.'
@@ -156,12 +153,6 @@ async def _fetch_schema_context(tenant_membership) -> str:
         )
 
     # Schema is active: fetch table list
-    provider = tenant_membership.tenant.provider
-    if provider == "commcare_connect":
-        pipeline_name = "connect_sync"
-    else:
-        pipeline_name = "commcare_sync"
-
     registry = get_registry()
     pipeline_config = registry.get(pipeline_name) or registry.get("commcare_sync")
 
@@ -173,11 +164,11 @@ async def _fetch_schema_context(tenant_membership) -> str:
 
     # Try full schema with columns
     try:
-        ctx = await load_tenant_context(tenant_membership.tenant.external_id)
+        ctx = await load_tenant_context(tenant.external_id)
         from apps.projects.models import TenantMetadata
 
         tenant_metadata = await TenantMetadata.objects.filter(
-            tenant_membership_id=tenant_membership.id
+            tenant_membership__tenant=tenant, tenant_membership__user=user
         ).afirst()
 
         column_map: dict[str, list[dict]] = {}
@@ -277,42 +268,30 @@ def _make_injecting_tool_node(
 
 
 async def build_agent_graph(
-    tenant_membership: TenantMembership,
+    workspace: Workspace,
     user: User | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     mcp_tools: list | None = None,
     oauth_tokens: dict | None = None,
 ):
     """
-    Build a LangGraph agent graph for a tenant workspace.
+    Build a LangGraph agent graph for a workspace.
 
     Args:
-        tenant_membership: The TenantMembership for the current user.
+        workspace: The Workspace model instance.
         user: Optional User model instance.
         checkpointer: Optional LangGraph checkpointer for conversation persistence.
         mcp_tools: List of MCP tools to include.
         oauth_tokens: Optional OAuth tokens for tool authentication.
     """
-    from apps.projects.models import TenantWorkspace, Workspace
-
-    workspace, _ = await TenantWorkspace.objects.aget_or_create(
-        tenant=tenant_membership.tenant,
-    )
-    knowledge_workspace = await Workspace.objects.filter(
-        workspace_tenants__tenant=tenant_membership.tenant
-    ).afirst()
-
-    logger.info("Building agent graph for tenant:%s", tenant_membership.tenant.external_id)
+    logger.info("Building agent graph for workspace %s", workspace.id)
 
     # --- Build tools ---
     tools = _build_tools(workspace, user, mcp_tools or [])
-    logger.debug("Created %d tools for tenant:%s", len(tools), tenant_membership.tenant.external_id)
+    logger.debug("Created %d tools for workspace %s", len(tools), workspace.id)
 
-    # --- Inject tenant_id and tenant_membership_id into MCP tool calls ---
-    injections = {
-        "tenant_id": "tenant_id",
-        "tenant_membership_id": "tenant_membership_id",
-    }
+    # --- Inject workspace_id into MCP tool calls from agent state ---
+    injections = {"workspace_id": "workspace_id"}
     hidden_params = list(injections.keys())
 
     # --- Build LLM with tools ---
@@ -325,11 +304,11 @@ async def build_agent_graph(
     llm_with_tools = llm.bind_tools(llm_tool_schemas)
 
     # --- Build system prompt ---
-    system_prompt = await _build_system_prompt(workspace, tenant_membership, knowledge_workspace)
+    system_prompt = await _build_system_prompt(workspace, user)
     logger.debug(
-        "System prompt assembled: %d characters for tenant:%s",
+        "System prompt assembled: %d characters for workspace %s",
         len(system_prompt),
-        tenant_membership.tenant.external_id,
+        workspace.id,
     )
 
     # --- Create tool node with context ID injection ---
@@ -425,15 +404,15 @@ async def build_agent_graph(
     compiled = graph.compile(checkpointer=checkpointer)
 
     logger.info(
-        "Agent graph compiled for tenant:%s (checkpointer: %s)",
-        tenant_membership.tenant.external_id,
+        "Agent graph compiled for workspace %s (checkpointer: %s)",
+        workspace.id,
         type(checkpointer).__name__ if checkpointer else "None",
     )
 
     return compiled
 
 
-def _build_tools(workspace: TenantWorkspace, user: User | None, mcp_tools: list) -> list:
+def _build_tools(workspace: Workspace, user: User | None, mcp_tools: list) -> list:
     """
     Build the tool list for the agent.
 
@@ -450,7 +429,7 @@ def _build_tools(workspace: TenantWorkspace, user: User | None, mcp_tools: list)
     - save_as_recipe: For creating replayable analysis workflows
 
     Args:
-        workspace: The TenantWorkspace model instance.
+        workspace: The Workspace model instance.
         user: Optional User for tracking learning discovery.
         mcp_tools: LangChain tools loaded from the MCP server.
 
@@ -464,22 +443,20 @@ def _build_tools(workspace: TenantWorkspace, user: User | None, mcp_tools: list)
     return tools
 
 
-async def _build_system_prompt(
-    workspace: TenantWorkspace, tenant_membership: TenantMembership, knowledge_workspace=None
-) -> str:
+async def _build_system_prompt(workspace: Workspace, user) -> str:
     """
-    Assemble the complete system prompt for a tenant workspace.
+    Assemble the complete system prompt for a workspace.
 
     The prompt is built from:
     1. BASE_SYSTEM_PROMPT: Core agent behavior and formatting
     2. ARTIFACT_PROMPT_ADDITION: Instructions for creating artifacts
-    3. Workspace system prompt: Tenant-specific instructions
+    3. Workspace system prompt: Workspace-specific instructions
     4. Knowledge retriever output: Metrics, rules, learnings
-    5. Tenant context: Tenant name, provider, query config
+    5. Tenant context: Tenant name, provider, query config (single-tenant only)
 
     Args:
-        workspace: The TenantWorkspace model instance.
-        tenant_membership: The TenantMembership for context metadata.
+        workspace: The Workspace model instance.
+        user: The User model instance (used to scope tenant metadata lookup).
 
     Returns:
         Complete system prompt string.
@@ -488,25 +465,24 @@ async def _build_system_prompt(
     sections.append(ARTIFACT_PROMPT_ADDITION)
 
     if workspace.system_prompt:
-        sections.append(f"\n## Tenant-Specific Instructions\n\n{workspace.system_prompt}\n")
+        sections.append(f"\n## Workspace Instructions\n\n{workspace.system_prompt}\n")
 
-    if knowledge_workspace is not None:
-        retriever = KnowledgeRetriever(knowledge_workspace)
-        knowledge_context = await retriever.retrieve()
-        if knowledge_context:
-            sections.append(f"\n## Knowledge Base\n\n{knowledge_context}\n")
+    retriever = KnowledgeRetriever(workspace)
+    knowledge_context = await retriever.retrieve()
+    if knowledge_context:
+        sections.append(f"\n## Knowledge Base\n\n{knowledge_context}\n")
 
-    provider = tenant_membership.tenant.provider
-    if provider == "commcare_connect":
-        pipeline_name = "connect_sync"
-    else:
-        pipeline_name = "commcare_sync"
+    tenant_count = await workspace.tenants.acount()
 
-    sections.append(f"""
+    if tenant_count == 1:
+        tenant = await workspace.tenants.afirst()
+        pipeline_name = "connect_sync" if tenant.provider == "commcare_connect" else "commcare_sync"
+
+        sections.append(f"""
 ## Tenant Context
 
-- Tenant: {tenant_membership.tenant.canonical_name} ({tenant_membership.tenant.external_id})
-- Provider: {provider}
+- Tenant: {tenant.canonical_name} ({tenant.external_id})
+- Provider: {tenant.provider}
 - Pipeline: {pipeline_name}
 
 ## Query Configuration
@@ -517,10 +493,23 @@ async def _build_system_prompt(
 When results are truncated, suggest adding filters or using aggregations to reduce the result size.
 """)
 
-    # Pre-fetch schema state and table metadata — no need to call get_schema_status at runtime.
-    # If data is not yet loaded, the context will say so and instruct the agent to run_materialization.
-    schema_context = await _fetch_schema_context(tenant_membership)
-    sections.append(f"\n## Data Availability\n\n{schema_context}\n")
+        # Pre-fetch schema state and table metadata — no need to call get_schema_status at runtime.
+        schema_context = await _fetch_schema_context(tenant, user)
+        sections.append(f"\n## Data Availability\n\n{schema_context}\n")
+    elif tenant_count > 1:
+        sections.append("""
+## Query Configuration
+
+- Maximum rows per query: 500
+- Query timeout: 30 seconds
+
+When results are truncated, suggest adding filters or using aggregations to reduce the result size.
+""")
+        sections.append(
+            "\n## Data Availability\n\n"
+            "This is a multi-tenant workspace. Use workspace_id when calling MCP tools. "
+            "Call `list_tables` to see available tables.\n"
+        )
 
     return "\n".join(sections)
 
