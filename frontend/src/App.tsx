@@ -38,9 +38,9 @@ export default function App() {
   }, [fetchMe, isPublicPage, isEmbedPage])
 
   // Auto-close OAuth popup after redirect.
-  // A cookie is used because window.name is cleared by COOP headers during cross-origin OAuth.
   useEffect(() => {
-    if (document.cookie.includes("scout_auth_popup=1")) {
+    const params = new URLSearchParams(window.location.search)
+    if (document.cookie.includes("scout_auth_popup=1") || params.get("popup_close") === "1") {
       document.cookie = "scout_auth_popup=;max-age=0;path=/"
       window.close()
     }
