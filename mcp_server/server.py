@@ -56,6 +56,13 @@ from mcp_server.services.metadata import (
 )
 from mcp_server.services.query import execute_query
 
+from apps.users.auth_views import PROVIDER_TOKEN_URLS
+from apps.users.services.token_refresh import (
+    TokenRefreshError,
+    refresh_oauth_token,
+    token_needs_refresh,
+)
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("scout")
@@ -428,6 +435,23 @@ async def cancel_materialization(run_id: str) -> dict:
         return tc["result"]
 
 
+def _resolve_oauth_credential(token_obj, provider: str) -> dict:
+    """Build an OAuth credential dict, refreshing the token if expired."""
+    token_value = token_obj.token
+
+    if token_needs_refresh(token_obj.expires_at):
+        token_url = PROVIDER_TOKEN_URLS.get(provider)
+        if token_url and token_obj.token_secret:
+            try:
+                token_value = refresh_oauth_token(token_obj, token_url)
+            except TokenRefreshError:
+                logger.warning(
+                    "Token refresh failed for provider %s, using existing token", provider
+                )
+
+    return {"type": "oauth", "value": token_value}
+
+
 @mcp.tool()
 async def run_materialization(
     tenant_id: str,
@@ -521,13 +545,13 @@ async def run_materialization(
             from allauth.socialaccount.models import SocialToken
 
             if tm.tenant.provider == "commcare_connect":
-                token_obj = await SocialToken.objects.filter(
+                token_obj = await SocialToken.objects.select_related("app").filter(
                     account__user=tm.user,
                     account__provider__startswith="commcare_connect",
                 ).afirst()
             else:
                 token_obj = (
-                    await SocialToken.objects.filter(
+                    await SocialToken.objects.select_related("app").filter(
                         account__user=tm.user,
                         account__provider__startswith="commcare",
                     )
@@ -540,7 +564,7 @@ async def run_materialization(
                     f"No OAuth token found for provider '{tm.tenant.provider}'",
                 )
                 return tc["result"]
-            credential = {"type": "oauth", "value": token_obj.token}
+            credential = await sync_to_async(_resolve_oauth_credential)(token_obj, tm.tenant.provider)
 
         # ── Build progress callback ───────────────────────────────────────────
         # run_pipeline runs in a thread (via sync_to_async), so we bridge back
