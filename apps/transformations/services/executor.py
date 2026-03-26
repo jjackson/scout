@@ -104,6 +104,22 @@ def _run_stage(run, assets, schema_name, stage_name):
         )
         asset_runs[asset.name] = ar
 
+    try:
+        _execute_stage(asset_runs, assets, schema_name, stage_name)
+    except Exception:
+        # Mark any asset runs still in RUNNING as FAILED so they don't stay orphaned.
+        now = datetime.now(UTC)
+        for ar in asset_runs.values():
+            if ar.status == AssetRunStatus.RUNNING:
+                ar.status = AssetRunStatus.FAILED
+                ar.logs = "Stage failed before results were recorded"
+                ar.completed_at = now
+                ar.save(update_fields=["status", "logs", "completed_at"])
+        raise
+
+
+def _execute_stage(asset_runs, assets, schema_name, stage_name):
+    """Execute dbt for a single stage and record per-asset results."""
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir) / "project"
         profiles_dir = Path(tmpdir) / "profiles"
@@ -132,9 +148,9 @@ def _run_stage(run, assets, schema_name, stage_name):
             models=model_names,
         )
 
-        # Run tests if any assets define them
+        # Run tests only if models succeeded and any assets define tests
         test_results = {}
-        if any(a.test_yaml for a in assets):
+        if result.get("success") and any(a.test_yaml for a in assets):
             test_results = run_dbt_test(
                 dbt_project_dir=str(project_dir),
                 profiles_dir=str(profiles_dir),

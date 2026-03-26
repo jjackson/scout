@@ -194,13 +194,16 @@ def test_skipped_model_marked_as_skipped(mock_profiles, mock_dbt, tenant, system
 @patch("apps.transformations.services.executor.run_dbt")
 @patch("apps.transformations.services.executor.generate_profiles_yml")
 def test_total_dbt_failure(mock_profiles, mock_dbt, tenant, system_assets):
-    """dbt crashes entirely — TransformationRun is FAILED."""
+    """dbt crashes entirely — TransformationRun and all AssetRuns are FAILED."""
     mock_dbt.side_effect = RuntimeError("dbt crashed")
 
     run = run_transformation_pipeline(tenant=tenant, schema_name="test_schema")
 
     assert run.status == TransformationRunStatus.FAILED
     assert "dbt crashed" in run.error_message
+    # Asset runs must not be left in RUNNING — they should be cleaned up to FAILED
+    assert run.asset_runs.count() == 3
+    assert all(ar.status == AssetRunStatus.FAILED for ar in run.asset_runs.all())
 
 
 @pytest.mark.django_db
