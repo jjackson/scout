@@ -32,14 +32,8 @@ OUTPUTS=$(aws cloudformation describe-stacks \
 
 # Parse outputs into env vars
 get_output() {
-  echo "$OUTPUTS" | python3 -c "
-import sys, json
-outputs = json.load(sys.stdin)
-for o in outputs:
-    if o['OutputKey'] == '$1':
-        print(o['OutputValue'])
-        break
-"
+  echo "$OUTPUTS" | python3 -c \
+    "import sys,json; key=sys.argv[1]; outputs=json.load(sys.stdin); print(next(o['OutputValue'] for o in outputs if o['OutputKey']==key))" "$1"
 }
 
 EC2_IP=$(get_output "EC2PublicIP")
