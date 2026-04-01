@@ -1,0 +1,6 @@
+#!/bin/bash
+# Run migrations in the newly-built API container before swapping
+
+echo "Running database migrations..."
+kamal app exec --version=$KAMAL_VERSION -- python manage.py migrate
+echo "Migrations complete"

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Ensure shared Docker network exists before any service deploys
+
+echo "Ensuring Docker network 'scout_shared' exists on remote server..."
+
+SSH_USER="scout"
+
+ssh ${SSH_USER}@${KAMAL_HOSTS} "docker network create scout_shared 2>/dev/null || echo 'Network already exists'"
+
+echo "Network setup complete"

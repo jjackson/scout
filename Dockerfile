@@ -31,6 +31,9 @@ COPY . .
 # Install the project itself (fast — deps already installed)
 RUN uv pip install --system --no-deps -e .
 
+# Collect static files at build time (not on every container start)
+RUN DJANGO_SECRET_KEY=build-placeholder python manage.py collectstatic --noinput
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
