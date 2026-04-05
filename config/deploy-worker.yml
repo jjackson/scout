@@ -14,6 +14,7 @@ servers:
     options:
       network: "scout_shared"
     cmd: "celery -A config worker --beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    proxy: false
 
 registry:
   server: <%= ENV.fetch('SCOUT_ECR_REGISTRY') %>
