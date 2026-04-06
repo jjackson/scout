@@ -27,6 +27,7 @@ env:
     DJANGO_SETTINGS_MODULE: config.settings.production
   secret:
     - DATABASE_URL
+    - MANAGED_DATABASE_URL
     - DB_CREDENTIAL_KEY
     - DJANGO_SECRET_KEY
 

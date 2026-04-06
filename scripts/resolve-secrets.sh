@@ -4,7 +4,7 @@
 # secret in .kamal/secrets) don't re-fetch from AWS.
 #
 # Usage: scripts/resolve-secrets.sh <KEY>
-# Keys: DATABASE_URL, DJANGO_SECRET_KEY, DB_CREDENTIAL_KEY, ANTHROPIC_API_KEY, SENTRY_DSN
+# Keys: DATABASE_URL, MANAGED_DATABASE_URL, DJANGO_SECRET_KEY, DB_CREDENTIAL_KEY, ANTHROPIC_API_KEY, SENTRY_DSN
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -58,6 +58,7 @@ if [ ! -f "$CACHE_FILE" ] || [ "$(find "$CACHE_FILE" -mmin +5 2>/dev/null)" ]; t
   # Write cache
   cat > "$CACHE_FILE" <<CACHE
 DATABASE_URL=$DATABASE_URL
+MANAGED_DATABASE_URL=$DATABASE_URL
 DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY
 DB_CREDENTIAL_KEY=$DB_CREDENTIAL_KEY
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY

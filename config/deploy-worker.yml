@@ -27,6 +27,7 @@ env:
     REDIS_URL: "redis://<%= ENV.fetch('SCOUT_REDIS_ENDPOINT') %>:6379/0"
   secret:
     - DATABASE_URL
+    - MANAGED_DATABASE_URL
     - DJANGO_SECRET_KEY
     - DB_CREDENTIAL_KEY
 
