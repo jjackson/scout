@@ -396,6 +396,7 @@ Resources:
                   - secretsmanager:GetSecretValue
                 Resource:
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:scout/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*'
 
 Outputs:
   EC2PublicIP:
