@@ -588,13 +588,18 @@ async def run_materialization(
             from allauth.socialaccount.models import SocialToken
 
             if tm.tenant.provider == "commcare_connect":
-                token_obj = await SocialToken.objects.select_related("app").filter(
-                    account__user=tm.user,
-                    account__provider__startswith="commcare_connect",
-                ).afirst()
+                token_obj = (
+                    await SocialToken.objects.select_related("app")
+                    .filter(
+                        account__user=tm.user,
+                        account__provider__startswith="commcare_connect",
+                    )
+                    .afirst()
+                )
             else:
                 token_obj = (
-                    await SocialToken.objects.select_related("app").filter(
+                    await SocialToken.objects.select_related("app")
+                    .filter(
                         account__user=tm.user,
                         account__provider__startswith="commcare",
                     )
@@ -607,7 +612,9 @@ async def run_materialization(
                     f"No OAuth token found for provider '{tm.tenant.provider}'",
                 )
                 return tc["result"]
-            credential = await sync_to_async(_resolve_oauth_credential)(token_obj, tm.tenant.provider)
+            credential = await sync_to_async(_resolve_oauth_credential)(
+                token_obj, tm.tenant.provider
+            )
 
         # ── Build progress callback ───────────────────────────────────────────
         # run_pipeline runs in a thread (via sync_to_async), so we bridge back

@@ -1,6 +1,8 @@
 """Completed works data loader for CommCare Connect.
 
-Fetches completed work records from the Connect CSV export endpoint.
+Fetches completed work records from the v2 paginated JSON export endpoint
+(``/export/opportunity/<id>/completed_works/``) and yields them unchanged —
+the writer's typed columns accept native JSON values directly.
 """
 
 from __future__ import annotations
@@ -17,11 +19,13 @@ class ConnectCompletedWorkLoader(ConnectBaseLoader):
     """Fetch completed work data from Connect."""
 
     def load_pages(self) -> Iterator[list[dict]]:
-        url = self._opp_url("completed_works/")
-        rows = self._get_csv(url)
-        logger.info("Fetched %d completed works for opportunity %s", len(rows), self.opportunity_id)
-        if rows:
-            yield rows
+        total = 0
+        for page in self._paginate_export_pages("completed_works/"):
+            if not page:
+                continue
+            total += len(page)
+            yield page
+        logger.info("Fetched %d completed works for opportunity %s", total, self.opportunity_id)
 
     def load(self) -> list[dict]:
         return [row for page in self.load_pages() for row in page]
