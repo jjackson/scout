@@ -42,6 +42,16 @@ The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs on every push 
 |--------|--------|
 | `SCOUT_GITHUB_DEPLOY_ROLE_ARN` | CloudFormation output `GitHubDeployRoleArn` |
 | `SSH_PRIVATE_KEY` | `scout-deploy` key pair (1Password: "scout prod ec2 SSH Key" in "GSO: Open Chat Studio Team (OCS)") |
+| `SCOUT_EC2_IP` | CloudFormation output `EC2PublicIP` |
+| `SCOUT_REDIS_ENDPOINT` | CloudFormation output `RedisEndpoint` |
+| `SCOUT_RDS_SECRET_ARN` | CloudFormation output `RDSSecretArn` |
+| `SCOUT_RDS_ENDPOINT` | CloudFormation output `RDSEndpoint` |
+
+**Variables** (Settings > Variables > Actions):
+
+| Variable | Source |
+|----------|--------|
+| `SCOUT_ECR_REGISTRY` | CloudFormation output `ECRRegistry` |
 
 ### AWS Secrets Manager
 

@@ -29,10 +29,13 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Prime env vars from AWS
+      - name: Set deploy env vars
         run: |
-          ./scripts/fetch-deploy-env.sh -q
-          grep -v '^#' .env.deploy >> $GITHUB_ENV
+          echo "SCOUT_EC2_IP=${{ secrets.SCOUT_EC2_IP }}" >> $GITHUB_ENV
+          echo "SCOUT_ECR_REGISTRY=${{ vars.SCOUT_ECR_REGISTRY }}" >> $GITHUB_ENV
+          echo "SCOUT_REDIS_ENDPOINT=${{ secrets.SCOUT_REDIS_ENDPOINT }}" >> $GITHUB_ENV
+          echo "SCOUT_RDS_SECRET_ARN=${{ secrets.SCOUT_RDS_SECRET_ARN }}" >> $GITHUB_ENV
+          echo "SCOUT_RDS_ENDPOINT=${{ secrets.SCOUT_RDS_ENDPOINT }}" >> $GITHUB_ENV
 
       - name: Build and push API image
         run: |
