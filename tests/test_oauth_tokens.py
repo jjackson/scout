@@ -3,7 +3,7 @@ Tests for OAuth token storage, encryption, retrieval, and refresh.
 """
 
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -167,47 +167,44 @@ class TestGetUserOAuthTokens:
 class TestTokenRefresh:
     """Test the OAuth token refresh service."""
 
-    @patch("apps.users.services.token_refresh.requests.post")
-    def test_refresh_updates_token(self, mock_post):
+    @pytest.mark.asyncio
+    async def test_refresh_updates_token(self, httpx_mock):
         from apps.users.services.token_refresh import refresh_oauth_token
 
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(
-                return_value={
-                    "access_token": "new_access_token",
-                    "refresh_token": "new_refresh_token",
-                    "expires_in": 3600,
-                }
-            ),
+        token_url = "https://www.commcarehq.org/oauth/token/"
+        httpx_mock.add_response(
+            url=token_url,
+            method="POST",
+            json={
+                "access_token": "new_access_token",
+                "refresh_token": "new_refresh_token",
+                "expires_in": 3600,
+            },
         )
-        mock_post.return_value.raise_for_status = MagicMock()
 
         social_token = MagicMock()
         social_token.token = "old_access_token"
         social_token.token_secret = "old_refresh_token"
         social_token.app.client_id = "client_123"
         social_token.app.secret = "secret_456"
+        social_token.asave = AsyncMock()
 
-        # CommCare HQ token URL
-        token_url = "https://www.commcarehq.org/oauth/token/"
-
-        result = refresh_oauth_token(social_token, token_url)
+        result = await refresh_oauth_token(social_token, token_url)
 
         assert result == "new_access_token"
         assert social_token.token == "new_access_token"
         assert social_token.token_secret == "new_refresh_token"
-        social_token.save.assert_called_once()
+        social_token.asave.assert_awaited_once()
 
-    @patch("apps.users.services.token_refresh.requests.post")
-    def test_refresh_failure_raises(self, mock_post):
+    @pytest.mark.asyncio
+    async def test_refresh_failure_raises(self, httpx_mock):
         from apps.users.services.token_refresh import (
             TokenRefreshError,
             refresh_oauth_token,
         )
 
-        mock_post.return_value = MagicMock(status_code=400)
-        mock_post.return_value.raise_for_status.side_effect = Exception("Bad Request")
+        token_url = "https://example.com/oauth/token/"
+        httpx_mock.add_response(url=token_url, method="POST", status_code=400)
 
         social_token = MagicMock()
         social_token.token_secret = "old_refresh_token"
@@ -215,7 +212,7 @@ class TestTokenRefresh:
         social_token.app.secret = "secret_456"
 
         with pytest.raises(TokenRefreshError):
-            refresh_oauth_token(social_token, "https://example.com/oauth/token/")
+            await refresh_oauth_token(social_token, token_url)
 
     def test_token_needs_refresh_when_expiring_soon(self):
         from apps.users.services.token_refresh import token_needs_refresh
