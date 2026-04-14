@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 from allauth.socialaccount.models import SocialToken
-from asgiref.sync import sync_to_async
 
 from apps.users.services.token_refresh import (
     PROVIDER_TOKEN_URLS,
@@ -103,10 +102,10 @@ async def aresolve_credential(membership) -> dict | None:
     if not token_obj:
         return None
 
-    return await sync_to_async(_resolve_oauth_credential)(token_obj, provider)
+    return await _aresolve_oauth_credential(token_obj, provider)
 
 
-def _resolve_oauth_credential(token_obj, provider: str) -> dict:
+async def _aresolve_oauth_credential(token_obj, provider: str) -> dict:
     """Build an OAuth credential dict, refreshing the token if near expiry."""
     token_value = token_obj.token
 
@@ -114,7 +113,7 @@ def _resolve_oauth_credential(token_obj, provider: str) -> dict:
         token_url = PROVIDER_TOKEN_URLS.get(provider)
         if token_url and token_obj.token_secret:
             try:
-                token_value = refresh_oauth_token(token_obj, token_url)
+                token_value = await refresh_oauth_token(token_obj, token_url)
             except TokenRefreshError:
                 logger.warning(
                     "Token refresh failed for provider %s, using existing token", provider
