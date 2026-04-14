@@ -4,6 +4,7 @@ import json
 import logging
 
 from allauth.socialaccount.models import SocialAccount, SocialApp, SocialToken
+from asgiref.sync import async_to_sync
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sites.models import Site
@@ -48,12 +49,16 @@ def _user_response(user, *, onboarding_complete=False):
 
 
 def _try_resolve_provider(user, provider, resolve_fn, provider_name):
-    """Attempt lazy OAuth onboarding resolution for a provider."""
+    """Attempt lazy OAuth onboarding resolution for a provider.
+
+    resolve_fn is an async callable; it's called via async_to_sync because
+    me_view is a sync Django view.
+    """
     token_obj = get_social_token(user, provider)
     if not token_obj:
         return False
     try:
-        resolve_fn(user, token_obj.token)
+        async_to_sync(resolve_fn)(user, token_obj.token)
         return True
     except Exception:
         logger.warning("Failed to resolve %s in me_view", provider_name, exc_info=True)
