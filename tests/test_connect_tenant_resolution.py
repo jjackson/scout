@@ -1,27 +1,22 @@
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from apps.users.services.tenant_resolution import ConnectAuthError, resolve_connect_opportunities
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 class TestResolveConnectOpportunities:
-    def test_fetches_and_stores_opportunities(self, user):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "opportunities": [
-                {"id": 42, "name": "Opp 42"},
-                {"id": 99, "name": "Test Opp"},
-            ],
-        }
+    @pytest.mark.asyncio
+    async def test_fetches_and_stores_opportunities(self, user, httpx_mock):
+        httpx_mock.add_response(
+            json={
+                "opportunities": [
+                    {"id": 42, "name": "Opp 42"},
+                    {"id": 99, "name": "Test Opp"},
+                ],
+            },
+        )
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            memberships = resolve_connect_opportunities(user, "fake-token")
+        memberships = await resolve_connect_opportunities(user, "fake-token")
 
         assert len(memberships) == 2
         assert memberships[0].tenant.provider == "commcare_connect"
@@ -33,48 +28,44 @@ class TestResolveConnectOpportunities:
         from apps.users.models import TenantCredential, TenantMembership
 
         assert (
-            TenantMembership.objects.filter(user=user, tenant__provider="commcare_connect").count()
+            await TenantMembership.objects.filter(
+                user=user, tenant__provider="commcare_connect"
+            ).acount()
             == 2
         )
 
-        # Verify that an OAUTH TenantCredential was created for each membership
-        for tm in TenantMembership.objects.filter(user=user, tenant__provider="commcare_connect"):
-            assert TenantCredential.objects.filter(
+        async for tm in TenantMembership.objects.filter(
+            user=user, tenant__provider="commcare_connect"
+        ):
+            assert await TenantCredential.objects.filter(
                 tenant_membership=tm, credential_type=TenantCredential.OAUTH
-            ).exists()
+            ).aexists()
 
-    def test_updates_existing_opportunity_name(self, user):
+    @pytest.mark.asyncio
+    async def test_updates_existing_opportunity_name(self, user, httpx_mock):
         from apps.users.models import Tenant, TenantMembership
 
-        tenant = Tenant.objects.create(
+        tenant = await Tenant.objects.acreate(
             provider="commcare_connect", external_id="42", canonical_name="Old Name"
         )
-        TenantMembership.objects.create(user=user, tenant=tenant)
+        await TenantMembership.objects.acreate(user=user, tenant=tenant)
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "opportunities": [
-                {"id": 42, "name": "New Name"},
-            ],
-        }
+        httpx_mock.add_response(
+            json={
+                "opportunities": [
+                    {"id": 42, "name": "New Name"},
+                ],
+            },
+        )
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            resolve_connect_opportunities(user, "fake-token")
+        await resolve_connect_opportunities(user, "fake-token")
 
-        tenant.refresh_from_db()
+        await tenant.arefresh_from_db()
         assert tenant.canonical_name == "New Name"
 
-    def test_auth_error_raises(self, user):
-        mock_response = MagicMock()
-        mock_response.status_code = 401
+    @pytest.mark.asyncio
+    async def test_auth_error_raises(self, user, httpx_mock):
+        httpx_mock.add_response(status_code=401)
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            with pytest.raises(ConnectAuthError):
-                resolve_connect_opportunities(user, "fake-token")
+        with pytest.raises(ConnectAuthError):
+            await resolve_connect_opportunities(user, "fake-token")

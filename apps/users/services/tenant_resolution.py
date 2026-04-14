@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-import requests
+import httpx
 
 from apps.users.models import Tenant, TenantCredential, TenantMembership
 
@@ -19,20 +19,27 @@ logger = logging.getLogger(__name__)
 COMMCARE_DOMAIN_API = "https://www.commcarehq.org/api/user_domains/v1/"
 
 
-def resolve_commcare_domains(user, access_token: str) -> list[TenantMembership]:
+class CommCareAuthError(Exception):
+    """Raised when CommCare returns a 401/403 during domain resolution."""
+
+
+class ConnectAuthError(Exception):
+    """Raised when Connect returns a 401/403 during opportunity resolution."""
+
+
+async def resolve_commcare_domains(user, access_token: str) -> list[TenantMembership]:
     """Fetch the user's CommCare domains and upsert TenantMembership records."""
-    domains = _fetch_all_domains(access_token)
+    domains = await _fetch_all_domains(access_token)
     memberships = []
 
     for domain in domains:
-        tenant, _ = Tenant.objects.update_or_create(
+        tenant, _ = await Tenant.objects.aupdate_or_create(
             provider="commcare",
             external_id=domain["domain_name"],
             defaults={"canonical_name": domain["project_name"]},
         )
-        tm, _ = TenantMembership.objects.get_or_create(user=user, tenant=tenant)
-        # Ensure a TenantCredential(oauth) exists for this membership
-        TenantCredential.objects.get_or_create(
+        tm, _ = await TenantMembership.objects.aget_or_create(user=user, tenant=tenant)
+        await TenantCredential.objects.aget_or_create(
             tenant_membership=tm,
             defaults={"credential_type": TenantCredential.OAUTH},
         )
@@ -46,15 +53,7 @@ def resolve_commcare_domains(user, access_token: str) -> list[TenantMembership]:
     return memberships
 
 
-class CommCareAuthError(Exception):
-    """Raised when CommCare returns a 401/403 during domain resolution."""
-
-
-class ConnectAuthError(Exception):
-    """Raised when Connect returns a 401/403 during opportunity resolution."""
-
-
-def resolve_connect_opportunities(user, access_token: str) -> list[TenantMembership]:
+async def resolve_connect_opportunities(user, access_token: str) -> list[TenantMembership]:
     """Fetch the user's Connect opportunities and upsert TenantMembership records."""
     try:
         from django.conf import settings
@@ -64,11 +63,11 @@ def resolve_connect_opportunities(user, access_token: str) -> list[TenantMembers
         base_url = "https://connect.dimagi.com"
 
     url = f"{base_url.rstrip('/')}/export/opp_org_program_list/"
-    resp = requests.get(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=30,
-    )
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
     if resp.status_code in (401, 403):
         raise ConnectAuthError(
             f"Connect returned {resp.status_code} — access token may have expired"
@@ -79,13 +78,13 @@ def resolve_connect_opportunities(user, access_token: str) -> list[TenantMembers
     memberships = []
 
     for opp in opportunities:
-        tenant, _ = Tenant.objects.update_or_create(
+        tenant, _ = await Tenant.objects.aupdate_or_create(
             provider="commcare_connect",
             external_id=str(opp["id"]),
             defaults={"canonical_name": opp["name"]},
         )
-        tm, _ = TenantMembership.objects.get_or_create(user=user, tenant=tenant)
-        TenantCredential.objects.get_or_create(
+        tm, _ = await TenantMembership.objects.aget_or_create(user=user, tenant=tenant)
+        await TenantCredential.objects.aget_or_create(
             tenant_membership=tm,
             defaults={"credential_type": TenantCredential.OAUTH},
         )
@@ -99,7 +98,7 @@ def resolve_connect_opportunities(user, access_token: str) -> list[TenantMembers
     return memberships
 
 
-def _fetch_all_domains(access_token: str) -> list[dict]:
+async def _fetch_all_domains(access_token: str) -> list[dict]:
     """Paginate through the CommCare user_domains API.
 
     Raises CommCareAuthError on 401/403 so callers can distinguish an
@@ -107,23 +106,22 @@ def _fetch_all_domains(access_token: str) -> list[dict]:
     """
     results = []
     url = COMMCARE_DOMAIN_API
-    while url:
-        resp = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=30,
-        )
-        if resp.status_code in (401, 403):
-            raise CommCareAuthError(
-                f"CommCare returned {resp.status_code} — access token may have expired"
+    async with httpx.AsyncClient(timeout=30) as client:
+        while url:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
             )
-        resp.raise_for_status()
-        data = resp.json()
-        results.extend(data.get("objects", []))
-        next_url = data.get("meta", {}).get("next")
-        # Only follow next URLs that point to the same host (SSRF protection)
-        if next_url and next_url.startswith(COMMCARE_DOMAIN_API.split("/api/")[0]):
-            url = next_url
-        else:
-            url = None
+            if resp.status_code in (401, 403):
+                raise CommCareAuthError(
+                    f"CommCare returned {resp.status_code} — access token may have expired"
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            results.extend(data.get("objects", []))
+            next_url = data.get("meta", {}).get("next")
+            if next_url and next_url.startswith(COMMCARE_DOMAIN_API.split("/api/")[0]):
+                url = next_url
+            else:
+                url = None
     return results

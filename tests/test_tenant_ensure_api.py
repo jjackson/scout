@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from django.test import Client
@@ -28,21 +28,19 @@ class TestTenantEnsureAPI:
     def test_ensure_creates_connect_membership(self, user):
         self._create_connect_social_token(user)
 
-        # Mock the Connect API to return the requested opportunity
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "opportunities": [
-                {"id": 532, "name": "Opportunity 532"},
-            ],
-        }
+        from apps.users.models import Tenant
+
+        tenant = Tenant.objects.create(
+            provider="commcare_connect", external_id="532", canonical_name="Opportunity 532"
+        )
+        tm_obj = TenantMembership.objects.create(user=user, tenant=tenant)
 
         client = Client()
         client.force_login(user)
 
         with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
+            "apps.users.services.tenant_resolution.resolve_connect_opportunities",
+            new=AsyncMock(return_value=[tm_obj]),
         ):
             response = client.post(
                 "/api/auth/tenants/ensure/",
@@ -65,21 +63,20 @@ class TestTenantEnsureAPI:
     def test_ensure_returns_404_for_unauthorized_opportunity(self, user):
         self._create_connect_social_token(user)
 
-        # Mock the Connect API to return a different opportunity (not 999)
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "opportunities": [
-                {"id": 532, "name": "Opportunity 532"},
-            ],
-        }
+        from apps.users.models import Tenant
+
+        # Return memberships that don't include tenant_id 999
+        other_tenant = Tenant.objects.create(
+            provider="commcare_connect", external_id="532", canonical_name="Opportunity 532"
+        )
+        other_tm = TenantMembership.objects.create(user=user, tenant=other_tenant)
 
         client = Client()
         client.force_login(user)
 
         with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
+            "apps.users.services.tenant_resolution.resolve_connect_opportunities",
+            new=AsyncMock(return_value=[other_tm]),
         ):
             response = client.post(
                 "/api/auth/tenants/ensure/",

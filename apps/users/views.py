@@ -49,7 +49,7 @@ async def tenant_list_view(request):
             try:
                 from apps.users.services.tenant_resolution import resolve_commcare_domains
 
-                await sync_to_async(resolve_commcare_domains)(user, access_token)
+                await resolve_commcare_domains(user, access_token)
                 await cache.aset(commcare_cache_key, True, TENANT_REFRESH_TTL)
             except Exception:
                 logger.warning("Failed to refresh CommCare domains", exc_info=True)
@@ -62,7 +62,7 @@ async def tenant_list_view(request):
             try:
                 from apps.users.services.tenant_resolution import resolve_connect_opportunities
 
-                await sync_to_async(resolve_connect_opportunities)(user, connect_token)
+                await resolve_connect_opportunities(user, connect_token)
                 await cache.aset(connect_cache_key, True, TENANT_REFRESH_TTL)
             except Exception:
                 logger.warning("Failed to refresh Connect opportunities", exc_info=True)
@@ -311,7 +311,7 @@ async def tenant_ensure_view(request):
                 resolve_connect_opportunities,
             )
 
-            memberships = await sync_to_async(resolve_connect_opportunities)(user, connect_token)
+            memberships = await resolve_connect_opportunities(user, connect_token)
             tm = next((m for m in memberships if m.tenant.external_id == tenant_id), None)
             if tm is None:
                 return JsonResponse(
