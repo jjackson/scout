@@ -5,8 +5,9 @@ Database access layer for the Scout agent, exposed via the Model Context
 Protocol. Runs as a standalone process but uses Django ORM to load project
 configuration and database credentials.
 
-Every tool requires a tenant_id parameter identifying which tenant's
-database to operate on. All responses use a consistent envelope format.
+Tools receive a workspace_id (injected server-side by the agent graph)
+to route queries to the correct schema. All responses use a consistent
+envelope format.
 
 Usage:
     # stdio transport (for local clients)
@@ -43,7 +44,7 @@ from apps.workspaces.models import (
     TenantSchema,
     WorkspaceViewSchema,
 )
-from mcp_server.context import load_tenant_context, load_workspace_context
+from mcp_server.context import load_workspace_context
 from mcp_server.envelope import (
     AUTH_TOKEN_EXPIRED,
     INTERNAL_ERROR,
@@ -68,30 +69,29 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("scout")
 
 
-async def _resolve_mcp_context(workspace_id: str | None, tenant_id: str):
-    """Route to workspace or tenant context based on whether workspace_id is provided."""
-    if workspace_id:
-        return await load_workspace_context(workspace_id)
-    return await load_tenant_context(tenant_id)
+async def _resolve_mcp_context(workspace_id: str):
+    """Load a QueryContext for the workspace."""
+    if not workspace_id:
+        raise ValueError("workspace_id is required")
+    return await load_workspace_context(workspace_id)
 
 
 # --- Tools ---
 
 
 @mcp.tool()
-async def list_tables(tenant_id: str, workspace_id: str | None = None) -> dict:
-    """List all tables in the tenant's database schema.
+async def list_tables(workspace_id: str = "") -> dict:
+    """List all tables in the workspace's database schema.
 
     Returns table names, types, descriptions, row counts, and materialization timestamps.
     Returns an empty list if no materialization run has completed yet.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
-        workspace_id: Optional workspace UUID. When provided, routes to the workspace's schema.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    async with tool_context("list_tables", tenant_id) as tc:
+    async with tool_context("list_tables", workspace_id) as tc:
         try:
-            ctx = await _resolve_mcp_context(workspace_id, tenant_id)
+            ctx = await _resolve_mcp_context(workspace_id)
         except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -106,7 +106,6 @@ async def list_tables(tenant_id: str, workspace_id: str | None = None) -> dict:
                 tables = await sync_to_async(workspace_list_tables)(ctx)
                 tc["result"] = success_response(
                     {"tables": tables, "note": None},
-                    tenant_id=tenant_id,
                     schema=ctx.schema_name,
                     timing_ms=tc["timer"].elapsed_ms,
                 )
@@ -116,7 +115,6 @@ async def list_tables(tenant_id: str, workspace_id: str | None = None) -> dict:
         if ts is None:
             tc["result"] = success_response(
                 {"tables": [], "note": None},
-                tenant_id=tenant_id,
                 schema=ctx.schema_name,
                 timing_ms=tc["timer"].elapsed_ms,
             )
@@ -142,7 +140,6 @@ async def list_tables(tenant_id: str, workspace_id: str | None = None) -> dict:
         )
         tc["result"] = success_response(
             {"tables": tables, "note": note},
-            tenant_id=tenant_id,
             schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -150,20 +147,19 @@ async def list_tables(tenant_id: str, workspace_id: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def describe_table(tenant_id: str, table_name: str, workspace_id: str | None = None) -> dict:
+async def describe_table(table_name: str, workspace_id: str = "") -> dict:
     """Get detailed metadata for a specific table.
 
     Returns columns (name, type, nullable, default, description) and a table description.
     JSONB columns are annotated with summaries from the CommCare discover phase when available.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
         table_name: Name of the table to describe.
-        workspace_id: Optional workspace UUID. When provided, routes to the workspace's schema.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    async with tool_context("describe_table", tenant_id, table_name=table_name) as tc:
+    async with tool_context("describe_table", workspace_id, table_name=table_name) as tc:
         try:
-            ctx = await _resolve_mcp_context(workspace_id, tenant_id)
+            ctx = await _resolve_mcp_context(workspace_id)
         except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -199,7 +195,6 @@ async def describe_table(tenant_id: str, table_name: str, workspace_id: str | No
 
         tc["result"] = success_response(
             table,
-            tenant_id=tenant_id,
             schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -207,19 +202,18 @@ async def describe_table(tenant_id: str, table_name: str, workspace_id: str | No
 
 
 @mcp.tool()
-async def get_metadata(tenant_id: str, workspace_id: str | None = None) -> dict:
-    """Get a complete metadata snapshot for the tenant's database.
+async def get_metadata(workspace_id: str = "") -> dict:
+    """Get a complete metadata snapshot for the workspace's database.
 
     Returns all tables with their columns, descriptions, and table relationships
     defined by the materialization pipeline.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
-        workspace_id: Optional workspace UUID. When provided, routes to the workspace's schema.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    async with tool_context("get_metadata", tenant_id) as tc:
+    async with tool_context("get_metadata", workspace_id) as tc:
         try:
-            ctx = await _resolve_mcp_context(workspace_id, tenant_id)
+            ctx = await _resolve_mcp_context(workspace_id)
         except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -228,7 +222,6 @@ async def get_metadata(tenant_id: str, workspace_id: str | None = None) -> dict:
         if ts is None:
             tc["result"] = success_response(
                 {"schema": ctx.schema_name, "table_count": 0, "tables": {}, "relationships": []},
-                tenant_id=tenant_id,
                 schema=ctx.schema_name,
                 timing_ms=tc["timer"].elapsed_ms,
             )
@@ -260,7 +253,6 @@ async def get_metadata(tenant_id: str, workspace_id: str | None = None) -> dict:
                 "tables": metadata["tables"],
                 "relationships": metadata["relationships"],
             },
-            tenant_id=tenant_id,
             schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -268,7 +260,7 @@ async def get_metadata(tenant_id: str, workspace_id: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def get_lineage(tenant_id: str, model_name: str, workspace_id: str | None = None) -> dict:
+async def get_lineage(model_name: str, workspace_id: str = "") -> dict:
     """Get the transformation lineage for a model.
 
     Returns the chain of transformations from the given model back to the raw
@@ -277,22 +269,27 @@ async def get_lineage(tenant_id: str, model_name: str, workspace_id: str | None 
     or transformations were applied to the data.
 
     Args:
-        tenant_id: The tenant identifier.
         model_name: Name of the model to trace lineage for.
-        workspace_id: Optional workspace UUID.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
     from apps.transformations.services.lineage import get_lineage_chain
-    from apps.users.models import Tenant
+    from apps.workspaces.models import Workspace
 
-    async with tool_context("get_lineage", tenant_id, model_name=model_name) as tc:
-        try:
-            tenant = await Tenant.objects.aget(external_id=tenant_id)
-        except Tenant.DoesNotExist:
-            tc["result"] = error_response(NOT_FOUND, f"Tenant '{tenant_id}' not found")
+    async with tool_context("get_lineage", workspace_id, model_name=model_name) as tc:
+        if not workspace_id:
+            tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
             return tc["result"]
 
+        try:
+            workspace = await Workspace.objects.aget(id=workspace_id)
+        except Workspace.DoesNotExist:
+            tc["result"] = error_response(NOT_FOUND, f"Workspace '{workspace_id}' not found")
+            return tc["result"]
+
+        tenant_ids = [t.id async for t in workspace.tenants.all()]
+
         chain = await sync_to_async(get_lineage_chain)(
-            model_name, tenant_ids=[tenant.id], workspace_id=workspace_id
+            model_name, tenant_ids=tenant_ids, workspace_id=workspace_id
         )
 
         if not chain:
@@ -303,7 +300,6 @@ async def get_lineage(tenant_id: str, model_name: str, workspace_id: str | None 
 
         tc["result"] = success_response(
             {"model": model_name, "lineage": chain},
-            tenant_id=tenant_id,
             schema="",
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -311,21 +307,19 @@ async def get_lineage(tenant_id: str, model_name: str, workspace_id: str | None 
 
 
 @mcp.tool()
-async def query(tenant_id: str, sql: str, workspace_id: str | None = None) -> dict:
-    """Execute a read-only SQL query against the tenant's database.
+async def query(sql: str, workspace_id: str = "") -> dict:
+    """Execute a read-only SQL query against the workspace's database.
 
     The query is validated for safety (SELECT only, no dangerous functions),
     row limits are enforced, and execution uses a read-only database role.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
         sql: A SQL SELECT query to execute.
-        workspace_id: Optional workspace UUID. When provided, routes to the workspace's
-            view schema (multi-tenant) or the single tenant's schema.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    async with tool_context("query", tenant_id, sql=sql) as tc:
+    async with tool_context("query", workspace_id, sql=sql) as tc:
         try:
-            ctx = await _resolve_mcp_context(workspace_id, tenant_id)
+            ctx = await _resolve_mcp_context(workspace_id)
         except (ValueError, _ValidationError) as e:
             tc["result"] = error_response(VALIDATION_ERROR, str(e))
             return tc["result"]
@@ -350,7 +344,6 @@ async def query(tenant_id: str, sql: str, workspace_id: str | None = None) -> di
                 "sql_executed": result.get("sql_executed", ""),
                 "tables_accessed": result.get("tables_accessed", []),
             },
-            tenant_id=tenant_id,
             schema=ctx.schema_name,
             timing_ms=tc["timer"].elapsed_ms,
             warnings=warnings or None,
@@ -419,7 +412,6 @@ async def get_materialization_status(run_id: str) -> dict:
                 "completed_at": run.completed_at.isoformat() if run.completed_at else None,
                 "tenant_id": tenant_id,
             },
-            tenant_id=tenant_id,
             schema=schema,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -471,7 +463,6 @@ async def cancel_materialization(run_id: str) -> dict:
 
         tc["result"] = success_response(
             {"run_id": run_id, "cancelled": True, "previous_state": previous_state},
-            tenant_id=tenant_id,
             schema=schema,
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -679,7 +670,6 @@ async def run_materialization(
         all_succeeded = all(r["success"] for r in results)
         tc["result"] = success_response(
             {"tenants": results, "all_succeeded": all_succeeded},
-            tenant_id="",
             schema="",
             timing_ms=tc["timer"].elapsed_ms,
         )
@@ -687,151 +677,206 @@ async def run_materialization(
 
 
 @mcp.tool()
-async def get_schema_status(tenant_id: str, workspace_id: str = "") -> dict:
-    """Check whether data has been loaded for this tenant or workspace.
+async def get_schema_status(workspace_id: str = "") -> dict:
+    """Check whether data has been loaded for this workspace.
 
     Returns schema existence, state, last materialization timestamp, and table
     list. Always succeeds — returns exists=False if no schema has been
     provisioned yet. Safe to call before any data has been loaded.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
-        workspace_id: Optional workspace UUID. When provided, checks WorkspaceViewSchema state.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    from apps.workspaces.models import MaterializationRun, SchemaState, TenantSchema
+    from apps.workspaces.models import (
+        MaterializationRun,
+        SchemaState,
+        TenantSchema,
+        Workspace,
+        WorkspaceViewSchema,
+    )
 
-    async with tool_context("get_schema_status", tenant_id) as tc:
-        if workspace_id:
-            from apps.workspaces.models import WorkspaceViewSchema
-
-            vs = await WorkspaceViewSchema.objects.filter(
-                workspace_id=workspace_id,
-                state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
-            ).afirst()
-            if vs is None:
-                tc["result"] = success_response(
-                    {
-                        "exists": False,
-                        "state": "not_provisioned",
-                        "last_materialized_at": None,
-                        "tables": [],
-                    },
-                    tenant_id=workspace_id,
-                    schema="",
-                )
-            else:
-                tc["result"] = success_response(
-                    {"exists": True, "state": vs.state, "last_materialized_at": None, "tables": []},
-                    tenant_id=workspace_id,
-                    schema=vs.schema_name,
-                )
+    async with tool_context("get_schema_status", workspace_id) as tc:
+        if not workspace_id:
+            tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
             return tc["result"]
 
-        ts = await TenantSchema.objects.filter(
-            tenant__external_id=tenant_id,
-            state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
-        ).afirst()
+        not_provisioned = success_response(
+            {
+                "exists": False,
+                "state": "not_provisioned",
+                "last_materialized_at": None,
+                "tables": [],
+            },
+            schema="",
+        )
 
-        if ts is None:
+        try:
+            workspace = await Workspace.objects.aget(id=workspace_id)
+        except Workspace.DoesNotExist:
+            tc["result"] = not_provisioned
+            return tc["result"]
+
+        tenant_count = await workspace.tenants.acount()
+
+        if tenant_count == 0:
+            tc["result"] = not_provisioned
+            return tc["result"]
+
+        if tenant_count == 1:
+            # Single-tenant: check TenantSchema directly
+            tenant = await workspace.tenants.afirst()
+            ts = await TenantSchema.objects.filter(
+                tenant=tenant,
+                state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
+            ).afirst()
+
+            if ts is None:
+                tc["result"] = not_provisioned
+                return tc["result"]
+
+            last_run = (
+                await MaterializationRun.objects.filter(
+                    tenant_schema=ts,
+                    state=MaterializationRun.RunState.COMPLETED,
+                )
+                .order_by("-completed_at")
+                .afirst()
+            )
+
+            last_materialized_at = None
+            tables = []
+            if last_run:
+                if last_run.completed_at:
+                    last_materialized_at = last_run.completed_at.isoformat()
+                result_data = last_run.result or {}
+                if "tables" in result_data:
+                    tables = result_data["tables"]
+                elif "table" in result_data and "rows_loaded" in result_data:
+                    tables = [
+                        {"name": result_data["table"], "row_count": result_data["rows_loaded"]}
+                    ]
+
             tc["result"] = success_response(
                 {
-                    "exists": False,
-                    "state": "not_provisioned",
-                    "last_materialized_at": None,
-                    "tables": [],
+                    "exists": True,
+                    "state": ts.state,
+                    "last_materialized_at": last_materialized_at,
+                    "tables": tables,
                 },
-                tenant_id=tenant_id,
-                schema="",
+                schema=ts.schema_name,
             )
             return tc["result"]
 
+        # Multi-tenant: check WorkspaceViewSchema + per-tenant materialization
+        vs = await WorkspaceViewSchema.objects.filter(
+            workspace_id=workspace_id,
+            state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
+        ).afirst()
+
+        if vs is None:
+            tc["result"] = not_provisioned
+            return tc["result"]
+
+        # Collect last materialization time across all tenant schemas
+        tenant_ids = [t.id async for t in workspace.tenants.all()]
         last_run = (
             await MaterializationRun.objects.filter(
-                tenant_schema=ts,
+                tenant_schema__tenant_id__in=tenant_ids,
                 state=MaterializationRun.RunState.COMPLETED,
             )
             .order_by("-completed_at")
             .afirst()
         )
-
         last_materialized_at = None
-        tables = []
-        if last_run:
-            if last_run.completed_at:
-                last_materialized_at = last_run.completed_at.isoformat()
-            result_data = last_run.result or {}
-            # Single-table envelope: {"table": "...", "rows_loaded": N}.
-            # Multi-table pipelines may use a "tables" key instead; handle both.
-            if "tables" in result_data:
-                tables = result_data["tables"]
-            elif "table" in result_data and "rows_loaded" in result_data:
-                tables = [{"name": result_data["table"], "row_count": result_data["rows_loaded"]}]
+        if last_run and last_run.completed_at:
+            last_materialized_at = last_run.completed_at.isoformat()
+
+        # List tables from the view schema via information_schema
+        ctx = await _resolve_mcp_context(workspace_id)
+        tables = await sync_to_async(workspace_list_tables)(ctx)
 
         tc["result"] = success_response(
             {
                 "exists": True,
-                "state": ts.state,
+                "state": vs.state,
                 "last_materialized_at": last_materialized_at,
                 "tables": tables,
             },
-            tenant_id=tenant_id,
-            schema=ts.schema_name,
+            schema=vs.schema_name,
         )
         return tc["result"]
 
 
 @mcp.tool()
-async def teardown_schema(tenant_id: str, confirm: bool = False, workspace_id: str = "") -> dict:
-    """Drop the tenant's schema and all its materialized data.
+async def teardown_schema(confirm: bool = False, workspace_id: str = "") -> dict:
+    """Drop all materialized data for this workspace.
 
-    Destructive — the schema and all tables are permanently dropped. The
-    schema will be re-provisioned automatically on the next materialization run.
-    Metadata extracted during materialization (CommCare app structure, field
-    definitions) is stored separately and is NOT affected.
+    Destructive — all tenant schemas and the workspace view schema are
+    permanently dropped. Schemas will be re-provisioned automatically on
+    the next materialization run. Metadata extracted during materialization
+    (CommCare app structure, field definitions) is stored separately and
+    is NOT affected.
 
     Only call this when the user explicitly requests a data reset, or when
     a failed materialization has left the schema in an unrecoverable state.
 
     Args:
-        tenant_id: The tenant identifier (e.g. CommCare domain name).
         confirm: Must be True to execute. Defaults to False as a safety guard.
+        workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
     from asgiref.sync import sync_to_async
 
-    from apps.workspaces.models import SchemaState, TenantSchema
+    from apps.workspaces.models import SchemaState, TenantSchema, WorkspaceViewSchema
     from apps.workspaces.services.schema_manager import SchemaManager
 
-    async with tool_context("teardown_schema", tenant_id, confirm=confirm) as tc:
+    async with tool_context("teardown_schema", workspace_id, confirm=confirm) as tc:
         if not confirm:
             tc["result"] = error_response(
                 VALIDATION_ERROR,
                 "Pass confirm=True to tear down the schema. "
-                "This will permanently drop all materialized data for this tenant.",
+                "This will permanently drop all materialized data.",
             )
             return tc["result"]
 
-        ts = (
-            await TenantSchema.objects.filter(
-                tenant__external_id=tenant_id,
+        if not workspace_id:
+            tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
+            return tc["result"]
+
+        from apps.workspaces.models import Workspace
+
+        workspace = await Workspace.objects.filter(id=workspace_id).afirst()
+        if workspace is None:
+            tc["result"] = error_response(NOT_FOUND, f"Workspace '{workspace_id}' not found")
+            return tc["result"]
+
+        mgr = SchemaManager()
+        dropped = []
+
+        # Tear down the workspace view schema if it exists
+        vs = (
+            await WorkspaceViewSchema.objects.filter(
+                workspace=workspace,
             )
             .exclude(state=SchemaState.TEARDOWN)
             .afirst()
         )
+        if vs:
+            await sync_to_async(mgr.teardown_view_schema)(vs)
+            dropped.append(vs.schema_name)
 
-        if ts is None:
-            tc["result"] = error_response(
-                NOT_FOUND, f"No active schema found for tenant '{tenant_id}'"
-            )
-            return tc["result"]
-
-        schema_name = ts.schema_name
-        mgr = SchemaManager()
-        await sync_to_async(mgr.teardown)(ts)
+        # Tear down all tenant schemas for this workspace
+        tenant_ids = [t.id async for t in workspace.tenants.all()]
+        async for ts in TenantSchema.objects.filter(
+            tenant_id__in=tenant_ids,
+        ).exclude(state=SchemaState.TEARDOWN):
+            schema_name = ts.schema_name
+            await sync_to_async(mgr.teardown)(ts)
+            dropped.append(schema_name)
 
         tc["result"] = success_response(
-            {"schema_dropped": schema_name},
-            tenant_id=tenant_id,
-            schema=schema_name,
+            {"schemas_dropped": dropped},
+            schema="",
+            timing_ms=tc["timer"].elapsed_ms,
         )
         return tc["result"]
 
