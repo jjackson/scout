@@ -41,6 +41,11 @@ def get_social_token(user, provider: str) -> SocialToken | None:
     return _social_token_qs(user, provider).first()
 
 
+async def aget_social_token(user, provider: str) -> SocialToken | None:
+    """Async version of :func:`get_social_token`."""
+    return await _social_token_qs(user, provider).afirst()
+
+
 def resolve_credential(membership) -> dict | None:
     """Resolve a credential dict for a TenantMembership, or return None.
 
