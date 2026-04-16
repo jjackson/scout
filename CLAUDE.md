@@ -34,7 +34,7 @@ uv run ruff format .                      # Python format
 
 ## Architecture
 
-- **Backend**: Django 5 + DRF in `config/` and `apps/` (ASGI via uvicorn)
+- **Backend**: Django 5 + DRF in `config/` and `apps/` (ASGI via uvicorn, async-first)
 - **Frontend**: React 19 + Vite + Tailwind CSS 4 + TypeScript in `frontend/`
 - **AI**: LangGraph agent with langchain-anthropic, PostgreSQL checkpointer for conversation persistence
 - **MCP Server**: Standalone FastMCP server (`mcp_server/`) for tool-based data access (SQL execution, table metadata)
@@ -59,6 +59,16 @@ uv run ruff format .                      # Python format
 - `development.py` - DEBUG=True, console email
 - `production.py` - HTTPS enforced, secure cookies, HSTS
 - `test.py` - Test DB, MD5 hasher, in-memory email
+
+## Async conventions
+
+The codebase is async-first. New views should be `async def` using native Django async ORM.
+
+- **Views**: Raw `async def` views for streaming/chat/tenant endpoints; DRF `APIView` stays sync (DRF doesn't support async streaming)
+- **ORM**: Use async methods (`.aget()`, `.afirst()`, `.afilter()`, `.acreate()`, `.aupdate_or_create()`, `async for`) — never call sync ORM from async views
+- **Auth**: Use `await request.auser()` (Django 5 native), not `sync_to_async(get_user)`
+- **DB connections**: `AsyncConnectionPool` (psycopg_pool) for LangGraph checkpointer; `psycopg.AsyncConnection.connect()` for direct queries in MCP server
+- **`sync_to_async`**: Only for wrapping external API calls (OAuth token refresh, CommCare API) and inherently sync operations (dbt). Do not use for ORM calls.
 
 ## Environment variables
 
@@ -87,3 +97,19 @@ Interactive UI elements that QA automation (showboat/rodney) targets must have `
 Naming convention: `{component}-{element}` using kebab-case. Dynamic names use the pattern `{component}-{identifier}`, e.g. `table-item-users`, `schema-group-public`, `column-note-email`.
 
 When adding new interactive elements to pages that have QA scenarios in `tests/qa/`, add a `data-testid` to any element a test might need to click, read, or assert on.
+
+### Async tests
+
+Tests for async views use `pytest-asyncio` with Django's `AsyncClient`:
+
+```python
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_my_async_view(user):
+    client = AsyncClient()
+    await sync_to_async(client.login)(email=user.email, password="pass")
+    response = await client.post("/api/chat/", ...)
+```
+
+- Async DB tests require `transaction=True` (not just `@pytest.mark.django_db`)
+- Fixtures stay sync (standard pytest-django); async tests fetch via async ORM if needed
