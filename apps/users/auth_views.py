@@ -4,6 +4,7 @@ import json
 import logging
 
 from allauth.socialaccount.models import SocialAccount, SocialApp, SocialToken
+from asgiref.sync import async_to_sync
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sites.models import Site
@@ -14,10 +15,10 @@ from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.users.decorators import login_required_json
+from apps.users.decorators import async_login_required, login_required_json
 from apps.users.models import TenantMembership
 from apps.users.rate_limiting import check_rate_limit, record_attempt
-from apps.users.services.credential_resolver import get_social_token
+from apps.users.services.credential_resolver import aget_social_token
 from apps.users.services.tenant_resolution import (
     resolve_commcare_domains,
     resolve_connect_opportunities,
@@ -47,13 +48,13 @@ def _user_response(user, *, onboarding_complete=False):
     }
 
 
-def _try_resolve_provider(user, provider, resolve_fn, provider_name):
+async def _atry_resolve_provider(user, provider, resolve_fn, provider_name):
     """Attempt lazy OAuth onboarding resolution for a provider."""
-    token_obj = get_social_token(user, provider)
+    token_obj = await aget_social_token(user, provider)
     if not token_obj:
         return False
     try:
-        resolve_fn(user, token_obj.token)
+        await resolve_fn(user, token_obj.token)
         return True
     except Exception:
         logger.warning("Failed to resolve %s in me_view", provider_name, exc_info=True)
@@ -68,23 +69,25 @@ def csrf_view(request):
 
 
 @require_GET
-@login_required_json
-def me_view(request):
+@async_login_required
+async def me_view(request):
     """Return current user info or 401."""
-    user = request.user
+    user = request._authenticated_user
 
-    onboarding_complete = TenantMembership.objects.filter(
+    onboarding_complete = await TenantMembership.objects.filter(
         user=user,
         credential__isnull=False,
-    ).exists()
+    ).aexists()
 
     # If the user just completed CommCare OAuth but tenant resolution hasn't
     # run yet, resolve now so onboarding can complete.
     # Both providers are tried independently — a successful CommCare
     # resolution must not skip Connect.
     if not onboarding_complete:
-        commcare_ok = _try_resolve_provider(user, "commcare", resolve_commcare_domains, "CommCare")
-        connect_ok = _try_resolve_provider(
+        commcare_ok = await _atry_resolve_provider(
+            user, "commcare", resolve_commcare_domains, "CommCare"
+        )
+        connect_ok = await _atry_resolve_provider(
             user, "commcare_connect", resolve_connect_opportunities, "Connect"
         )
         onboarding_complete = commcare_ok or connect_ok
@@ -223,7 +226,7 @@ def providers_view(request):
                 token_url = PROVIDER_TOKEN_URLS.get(provider)
                 if token_url and social_token.token_secret:
                     try:
-                        refresh_oauth_token(social_token, token_url)
+                        async_to_sync(refresh_oauth_token)(social_token, token_url)
                         token_status[provider] = "connected"
                     except TokenRefreshError:
                         token_status[provider] = "expired"

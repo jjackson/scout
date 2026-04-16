@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-import requests
+import httpx
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def token_needs_refresh(expires_at: timezone.datetime | None) -> bool:
     return timezone.now() + REFRESH_BUFFER >= expires_at
 
 
-def refresh_oauth_token(social_token, token_url: str) -> str:
+async def refresh_oauth_token(social_token, token_url: str) -> str:
     """Refresh an OAuth token using the refresh token grant.
 
     Args:
@@ -53,17 +53,17 @@ def refresh_oauth_token(social_token, token_url: str) -> str:
         TokenRefreshError: If the refresh request fails.
     """
     try:
-        response = requests.post(
-            token_url,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": social_token.token_secret,
-                "client_id": social_token.app.client_id,
-                "client_secret": social_token.app.secret,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                token_url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": social_token.token_secret,
+                    "client_id": social_token.app.client_id,
+                    "client_secret": social_token.app.secret,
+                },
+            )
+            response.raise_for_status()
     except Exception as e:
         logger.error("Token refresh failed for app %s: %s", social_token.app.client_id, e)
         raise TokenRefreshError(f"Failed to refresh OAuth token: {e}") from e
@@ -74,7 +74,7 @@ def refresh_oauth_token(social_token, token_url: str) -> str:
         social_token.token_secret = data["refresh_token"]
     if data.get("expires_in"):
         social_token.expires_at = timezone.now() + timedelta(seconds=data["expires_in"])
-    social_token.save()
+    await social_token.asave()
 
     logger.info("Successfully refreshed OAuth token for app %s", social_token.app.client_id)
     return social_token.token

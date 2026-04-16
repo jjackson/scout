@@ -1,28 +1,24 @@
-from unittest.mock import MagicMock, patch
-
 import pytest
 
-from apps.users.services.tenant_resolution import resolve_commcare_domains
 
-
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 class TestResolveCommcareDomains:
-    def test_fetches_and_stores_domains(self, user):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "meta": {"limit": 20, "offset": 0, "total_count": 2, "next": None},
-            "objects": [
-                {"domain_name": "dimagi", "project_name": "Dimagi"},
-                {"domain_name": "test-project", "project_name": "Test Project"},
-            ],
-        }
+    @pytest.mark.asyncio
+    async def test_fetches_and_stores_domains(self, user, httpx_mock):
+        from apps.users.services.tenant_resolution import resolve_commcare_domains
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            memberships = resolve_commcare_domains(user, "fake-token")
+        httpx_mock.add_response(
+            url="https://www.commcarehq.org/api/user_domains/v1/",
+            json={
+                "meta": {"limit": 20, "offset": 0, "total_count": 2, "next": None},
+                "objects": [
+                    {"domain_name": "dimagi", "project_name": "Dimagi"},
+                    {"domain_name": "test-project", "project_name": "Test Project"},
+                ],
+            },
+        )
+
+        memberships = await resolve_commcare_domains(user, "fake-token")
 
         assert len(memberships) == 2
         assert memberships[0].tenant.external_id == "dimagi"
@@ -30,40 +26,42 @@ class TestResolveCommcareDomains:
 
         from apps.users.models import TenantMembership
 
-        assert TenantMembership.objects.filter(user=user).count() == 2
+        assert await TenantMembership.objects.filter(user=user).acount() == 2
 
-    def test_updates_existing_memberships(self, user):
+    @pytest.mark.asyncio
+    async def test_updates_existing_memberships(self, user, httpx_mock):
         from apps.users.models import Tenant, TenantMembership
+        from apps.users.services.tenant_resolution import resolve_commcare_domains
 
-        tenant = Tenant.objects.create(
+        tenant = await Tenant.objects.acreate(
             provider="commcare", external_id="dimagi", canonical_name="Old Name"
         )
-        TenantMembership.objects.create(user=user, tenant=tenant)
+        await TenantMembership.objects.acreate(user=user, tenant=tenant)
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "meta": {"limit": 20, "offset": 0, "total_count": 1, "next": None},
-            "objects": [{"domain_name": "dimagi", "project_name": "New Name"}],
-        }
+        httpx_mock.add_response(
+            url="https://www.commcarehq.org/api/user_domains/v1/",
+            json={
+                "meta": {"limit": 20, "offset": 0, "total_count": 1, "next": None},
+                "objects": [{"domain_name": "dimagi", "project_name": "New Name"}],
+            },
+        )
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            resolve_commcare_domains(user, "fake-token")
+        await resolve_commcare_domains(user, "fake-token")
 
-        tenant.refresh_from_db()
+        await tenant.arefresh_from_db()
         assert tenant.canonical_name == "New Name"
 
-    def test_api_error_raises(self, user):
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.raise_for_status.side_effect = Exception("Unauthorized")
+    @pytest.mark.asyncio
+    async def test_auth_error_raises(self, user, httpx_mock):
+        from apps.users.services.tenant_resolution import (
+            CommCareAuthError,
+            resolve_commcare_domains,
+        )
 
-        with patch(
-            "apps.users.services.tenant_resolution.requests.get",
-            return_value=mock_response,
-        ):
-            with pytest.raises(Exception):  # noqa: B017
-                resolve_commcare_domains(user, "fake-token")
+        httpx_mock.add_response(
+            url="https://www.commcarehq.org/api/user_domains/v1/",
+            status_code=401,
+        )
+
+        with pytest.raises(CommCareAuthError):
+            await resolve_commcare_domains(user, "fake-token")

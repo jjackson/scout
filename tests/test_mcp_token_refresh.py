@@ -1,7 +1,7 @@
 """Test that credential resolution refreshes expired OAuth tokens."""
 
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -9,8 +9,9 @@ from django.utils import timezone
 
 @pytest.mark.django_db
 class TestCredentialResolverTokenRefresh:
-    def test_expired_token_is_refreshed(self):
-        from apps.users.services.credential_resolver import _resolve_oauth_credential
+    @pytest.mark.asyncio
+    async def test_expired_token_is_refreshed(self):
+        from apps.users.services.credential_resolver import _aresolve_oauth_credential
 
         mock_token = MagicMock()
         mock_token.token = "old-expired-token"
@@ -24,16 +25,18 @@ class TestCredentialResolverTokenRefresh:
             ) as mock_needs,
             patch(
                 "apps.users.services.credential_resolver.refresh_oauth_token",
+                new_callable=AsyncMock,
                 return_value="new-fresh-token",
             ) as mock_refresh,
         ):
-            result = _resolve_oauth_credential(mock_token, "commcare")
+            result = await _aresolve_oauth_credential(mock_token, "commcare")
             mock_needs.assert_called_once_with(mock_token.expires_at)
-            mock_refresh.assert_called_once()
+            mock_refresh.assert_awaited_once()
             assert result["value"] == "new-fresh-token"
 
-    def test_valid_token_not_refreshed(self):
-        from apps.users.services.credential_resolver import _resolve_oauth_credential
+    @pytest.mark.asyncio
+    async def test_valid_token_not_refreshed(self):
+        from apps.users.services.credential_resolver import _aresolve_oauth_credential
 
         mock_token = MagicMock()
         mock_token.token = "still-valid-token"
@@ -43,14 +46,18 @@ class TestCredentialResolverTokenRefresh:
             patch(
                 "apps.users.services.credential_resolver.token_needs_refresh", return_value=False
             ),
-            patch("apps.users.services.credential_resolver.refresh_oauth_token") as mock_refresh,
+            patch(
+                "apps.users.services.credential_resolver.refresh_oauth_token",
+                new_callable=AsyncMock,
+            ) as mock_refresh,
         ):
-            result = _resolve_oauth_credential(mock_token, "commcare")
-            mock_refresh.assert_not_called()
+            result = await _aresolve_oauth_credential(mock_token, "commcare")
+            mock_refresh.assert_not_awaited()
             assert result["value"] == "still-valid-token"
 
-    def test_refresh_failure_returns_original_token(self):
-        from apps.users.services.credential_resolver import _resolve_oauth_credential
+    @pytest.mark.asyncio
+    async def test_refresh_failure_returns_original_token(self):
+        from apps.users.services.credential_resolver import _aresolve_oauth_credential
         from apps.users.services.token_refresh import TokenRefreshError
 
         mock_token = MagicMock()
@@ -61,8 +68,9 @@ class TestCredentialResolverTokenRefresh:
             patch("apps.users.services.credential_resolver.token_needs_refresh", return_value=True),
             patch(
                 "apps.users.services.credential_resolver.refresh_oauth_token",
+                new_callable=AsyncMock,
                 side_effect=TokenRefreshError("fail"),
             ),
         ):
-            result = _resolve_oauth_credential(mock_token, "commcare")
+            result = await _aresolve_oauth_credential(mock_token, "commcare")
             assert result["value"] == "maybe-still-works"

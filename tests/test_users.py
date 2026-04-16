@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -55,11 +55,11 @@ class TestTenantCredential:
             )
 
 
+@pytest.mark.django_db(transaction=True)
 class TestResolveCommcareDomains:
-    def test_creates_tenant_credential_oauth(self, user, db):
+    @pytest.mark.asyncio
+    async def test_creates_tenant_credential_oauth(self, user):
         """resolve_commcare_domains must create TenantCredential(type=oauth) for each membership."""
-        from unittest.mock import patch
-
         from apps.users.services.tenant_resolution import resolve_commcare_domains
 
         fake_domains = [
@@ -68,31 +68,32 @@ class TestResolveCommcareDomains:
         ]
         with patch(
             "apps.users.services.tenant_resolution._fetch_all_domains",
+            new_callable=AsyncMock,
             return_value=fake_domains,
         ):
-            memberships = resolve_commcare_domains(user, "fake-token")
+            memberships = await resolve_commcare_domains(user, "fake-token")
 
         assert len(memberships) == 2
         for tm in memberships:
-            cred = TenantCredential.objects.get(tenant_membership=tm)
+            cred = await TenantCredential.objects.aget(tenant_membership=tm)
             assert cred.credential_type == TenantCredential.OAUTH
             assert cred.encrypted_credential == ""
 
-    def test_idempotent_on_re_resolve(self, user, db):
+    @pytest.mark.asyncio
+    async def test_idempotent_on_re_resolve(self, user):
         """Calling resolve twice does not create duplicate TenantCredentials."""
-        from unittest.mock import patch
-
         from apps.users.services.tenant_resolution import resolve_commcare_domains
 
         fake_domains = [{"domain_name": "domain-a", "project_name": "Domain A"}]
         with patch(
             "apps.users.services.tenant_resolution._fetch_all_domains",
+            new_callable=AsyncMock,
             return_value=fake_domains,
         ):
-            resolve_commcare_domains(user, "fake-token")
-            resolve_commcare_domains(user, "fake-token")
+            await resolve_commcare_domains(user, "fake-token")
+            await resolve_commcare_domains(user, "fake-token")
 
-        assert TenantCredential.objects.filter(tenant_membership__user=user).count() == 1
+        assert await TenantCredential.objects.filter(tenant_membership__user=user).acount() == 1
 
 
 class TestTenantCredentialEndpoints:
