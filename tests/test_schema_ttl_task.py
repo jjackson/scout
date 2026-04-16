@@ -63,7 +63,7 @@ def test_schema_with_null_last_accessed_is_not_expired(active_schema):
 
 @pytest.mark.django_db
 def test_teardown_schema_marks_expired_on_success(active_schema):
-    patch_target = "apps.workspaces.services.schema_manager.SchemaManager"
+    patch_target = "apps.workspaces.tasks.SchemaManager"
     with patch(patch_target) as MockManager:
         MockManager.return_value.teardown.return_value = None
         from apps.workspaces.tasks import teardown_schema
@@ -79,7 +79,7 @@ def test_teardown_schema_rolls_back_to_active_on_failure(active_schema):
     active_schema.state = SchemaState.TEARDOWN
     active_schema.save(update_fields=["state"])
 
-    patch_target = "apps.workspaces.services.schema_manager.SchemaManager"
+    patch_target = "apps.workspaces.tasks.SchemaManager"
     with patch(patch_target) as MockManager:
         MockManager.return_value.teardown.side_effect = RuntimeError("DB error")
         from apps.workspaces.tasks import teardown_schema

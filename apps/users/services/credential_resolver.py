@@ -6,6 +6,8 @@ import logging
 
 from allauth.socialaccount.models import SocialToken
 
+from apps.users.adapters import decrypt_credential
+from apps.users.models import TenantCredential
 from apps.users.services.token_refresh import (
     PROVIDER_TOKEN_URLS,
     TokenRefreshError,
@@ -53,16 +55,12 @@ def resolve_credential(membership) -> dict | None:
     ``value`` (the decrypted key or OAuth token string), or ``None`` if no
     usable credential is found.
     """
-    from apps.users.models import TenantCredential
-
     try:
         cred_obj = TenantCredential.objects.get(tenant_membership=membership)
     except TenantCredential.DoesNotExist:
         return None
 
     if cred_obj.credential_type == TenantCredential.API_KEY:
-        from apps.users.adapters import decrypt_credential
-
         try:
             decrypted = decrypt_credential(cred_obj.encrypted_credential)
             return {"type": "api_key", "value": decrypted}
@@ -83,8 +81,6 @@ async def aresolve_credential(membership) -> dict | None:
     ``None``.  For OAuth tokens, attempts a refresh when the token is near
     expiry.
     """
-    from apps.users.models import TenantCredential
-
     try:
         cred_obj = await TenantCredential.objects.select_related("tenant_membership").aget(
             tenant_membership=membership
@@ -93,8 +89,6 @@ async def aresolve_credential(membership) -> dict | None:
         return None
 
     if cred_obj.credential_type == TenantCredential.API_KEY:
-        from apps.users.adapters import decrypt_credential
-
         try:
             decrypted = decrypt_credential(cred_obj.encrypted_credential)
             return {"type": "api_key", "value": decrypted}

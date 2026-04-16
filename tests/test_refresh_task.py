@@ -62,10 +62,10 @@ def test_refresh_task_marks_schema_active_on_success(provisioning_schema, tenant
             return_value={"type": "api_key", "value": "tok"},
         ),
         patch(
-            "mcp_server.pipeline_registry.get_registry",
+            "apps.workspaces.tasks.get_registry",
             return_value=_mock_registry(),
         ),
-        patch("mcp_server.services.materializer.run_pipeline"),
+        patch("apps.workspaces.tasks.run_pipeline"),
     ):
         from apps.workspaces.tasks import refresh_tenant_schema
 
@@ -91,10 +91,10 @@ def test_refresh_task_schedules_old_schema_teardown(
             return_value={"type": "api_key", "value": "tok"},
         ),
         patch(
-            "mcp_server.pipeline_registry.get_registry",
+            "apps.workspaces.tasks.get_registry",
             return_value=_mock_registry(),
         ),
-        patch("mcp_server.services.materializer.run_pipeline"),
+        patch("apps.workspaces.tasks.run_pipeline"),
         patch("apps.workspaces.tasks.teardown_schema.apply_async") as mock_apply_async,
     ):
         from apps.workspaces.tasks import refresh_tenant_schema
@@ -156,11 +156,11 @@ def test_refresh_task_marks_failed_on_materialization_error(
             return_value={"type": "api_key", "value": "tok"},
         ),
         patch(
-            "mcp_server.pipeline_registry.get_registry",
+            "apps.workspaces.tasks.get_registry",
             return_value=_mock_registry(),
         ),
         patch(
-            "mcp_server.services.materializer.run_pipeline",
+            "apps.workspaces.tasks.run_pipeline",
             side_effect=RuntimeError("Pipeline exploded"),
         ),
         patch("apps.workspaces.services.schema_manager.SchemaManager.teardown"),

@@ -5,7 +5,8 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.workspaces.models import WorkspaceRole
+from apps.users.models import Tenant
+from apps.workspaces.models import TenantSchema, Workspace, WorkspaceRole
 
 from .models import TransformationAsset, TransformationRun, TransformationScope
 from .serializers import (
@@ -13,6 +14,8 @@ from .serializers import (
     TransformationAssetSerializer,
     TransformationRunSerializer,
 )
+from .services.executor import run_transformation_pipeline
+from .services.lineage import get_lineage_chain
 
 
 class TransformationAssetViewSet(viewsets.ModelViewSet):
@@ -59,17 +62,13 @@ class TransformationAssetViewSet(viewsets.ModelViewSet):
         if serializer.instance.scope == TransformationScope.SYSTEM:
             raise PermissionDenied("System assets cannot be modified.")
         instance = serializer.instance
-        self._check_write_permission(
-            {"workspace": instance.workspace, "tenant": instance.tenant}
-        )
+        self._check_write_permission({"workspace": instance.workspace, "tenant": instance.tenant})
         serializer.save()
 
     def perform_destroy(self, instance):
         if instance.scope == TransformationScope.SYSTEM:
             raise PermissionDenied("System assets cannot be deleted.")
-        self._check_write_permission(
-            {"workspace": instance.workspace, "tenant": instance.tenant}
-        )
+        self._check_write_permission({"workspace": instance.workspace, "tenant": instance.tenant})
         instance.delete()
 
     def _check_write_permission(self, data):
@@ -85,15 +84,11 @@ class TransformationAssetViewSet(viewsets.ModelViewSet):
                 role__in=[WorkspaceRole.READ_WRITE, WorkspaceRole.MANAGE],
             ).exists()
             if not has_write:
-                raise PermissionDenied(
-                    "You need read_write or manage role on this workspace."
-                )
+                raise PermissionDenied("You need read_write or manage role on this workspace.")
 
     @action(detail=True, methods=["get"])
     def lineage(self, request, pk=None):
         """GET /api/transformations/assets/{id}/lineage/"""
-        from .services.lineage import get_lineage_chain
-
         asset = self.get_object()
         tenant_ids = list(request.user.tenant_memberships.values_list("tenant_id", flat=True))
         workspace_id = asset.workspace_id
@@ -130,11 +125,6 @@ class TransformationRunViewSet(viewsets.ReadOnlyModelViewSet):
         Body: {"tenant_id": "...", "workspace_id": "..." (optional)}
         Triggers a transformation run synchronously.
         """
-        from apps.users.models import Tenant
-        from apps.workspaces.models import TenantSchema
-
-        from .services.executor import run_transformation_pipeline
-
         tenant_id = request.data.get("tenant_id")
         if not tenant_id:
             return Response({"error": "tenant_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -158,17 +148,13 @@ class TransformationRunViewSet(viewsets.ReadOnlyModelViewSet):
         workspace = None
         workspace_id = request.data.get("workspace_id")
         if workspace_id:
-            from apps.workspaces.models import Workspace
-
             workspace = Workspace.objects.filter(
                 id=workspace_id,
                 memberships__user=request.user,
                 memberships__role__in=[WorkspaceRole.READ_WRITE, WorkspaceRole.MANAGE],
             ).first()
             if not workspace:
-                raise PermissionDenied(
-                    "Workspace not found or you are not a member."
-                )
+                raise PermissionDenied("Workspace not found or you are not a member.")
 
         run = run_transformation_pipeline(
             tenant=tenant,

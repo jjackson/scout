@@ -39,7 +39,7 @@ class TestTenantEnsureAPI:
         client.force_login(user)
 
         with patch(
-            "apps.users.services.tenant_resolution.resolve_connect_opportunities",
+            "apps.users.views.resolve_connect_opportunities",
             new=AsyncMock(return_value=[tm_obj]),
         ):
             response = client.post(
@@ -75,7 +75,7 @@ class TestTenantEnsureAPI:
         client.force_login(user)
 
         with patch(
-            "apps.users.services.tenant_resolution.resolve_connect_opportunities",
+            "apps.users.views.resolve_connect_opportunities",
             new=AsyncMock(return_value=[other_tm]),
         ):
             response = client.post(

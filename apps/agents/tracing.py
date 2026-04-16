@@ -11,18 +11,19 @@ Langfuse v3 architecture:
 - propagate_attributes() is a context manager that stamps session_id/user_id onto
   every span created within its scope.
 """
+
 from __future__ import annotations
 
 import contextlib
 import logging
+
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 
 def _get_langfuse_settings() -> tuple[str, str, str]:
     """Return (secret_key, public_key, host) from Django settings."""
-    from django.conf import settings
-
     return (
         getattr(settings, "LANGFUSE_SECRET_KEY", ""),
         getattr(settings, "LANGFUSE_PUBLIC_KEY", ""),

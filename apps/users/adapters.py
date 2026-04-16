@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
-from cryptography.fernet import Fernet
+from allauth.socialaccount.models import SocialToken
+from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,6 @@ class EncryptingSocialAccountAdapter(DefaultSocialAccountAdapter):
         """Decrypt a token string. Returns empty string for empty or unreadable input."""
         if not ciphertext:
             return ""
-        from cryptography.fernet import InvalidToken
-
         f = self._get_fernet()
         try:
             return f.decrypt(ciphertext.encode()).decode()
@@ -48,8 +47,6 @@ class EncryptingSocialAccountAdapter(DefaultSocialAccountAdapter):
 
     def serialize_instance(self, instance):
         """Encrypt token fields before serialization (storage)."""
-        from allauth.socialaccount.models import SocialToken
-
         data = super().serialize_instance(instance)
         if isinstance(instance, SocialToken):
             if data.get("token"):
@@ -60,8 +57,6 @@ class EncryptingSocialAccountAdapter(DefaultSocialAccountAdapter):
 
     def deserialize_instance(self, model, data):
         """Decrypt token fields after deserialization (retrieval)."""
-        from allauth.socialaccount.models import SocialToken
-
         if model is SocialToken:
             data = dict(data)  # don't mutate the original
             if data.get("token"):
@@ -73,8 +68,6 @@ class EncryptingSocialAccountAdapter(DefaultSocialAccountAdapter):
 
 def encrypt_credential(plaintext: str) -> str:
     """Fernet-encrypt a credential string using DB_CREDENTIAL_KEY."""
-    from django.conf import settings
-
     key = settings.DB_CREDENTIAL_KEY
     if not key:
         raise ValueError("DB_CREDENTIAL_KEY is not set in settings")
@@ -84,8 +77,6 @@ def encrypt_credential(plaintext: str) -> str:
 
 def decrypt_credential(ciphertext: str) -> str:
     """Fernet-decrypt a credential string using DB_CREDENTIAL_KEY."""
-    from django.conf import settings
-
     key = settings.DB_CREDENTIAL_KEY
     if not key:
         raise ValueError("DB_CREDENTIAL_KEY is not set in settings")
