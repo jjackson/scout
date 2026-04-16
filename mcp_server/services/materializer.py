@@ -21,8 +21,12 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+from django.utils import timezone
 from psycopg import sql as psql
 
+from apps.transformations.models import TransformationAsset
+from apps.transformations.services.commcare_staging import upsert_system_assets
+from apps.transformations.services.executor import run_transformation_pipeline
 from apps.workspaces.models import MaterializationRun, TenantMetadata
 from apps.workspaces.services.schema_manager import SchemaManager, get_managed_db_connection
 from mcp_server.loaders.commcare_cases import CommCareCaseLoader
@@ -36,7 +40,7 @@ from mcp_server.loaders.connect_metadata import ConnectMetadataLoader
 from mcp_server.loaders.connect_payments import ConnectPaymentLoader
 from mcp_server.loaders.connect_users import ConnectUserLoader
 from mcp_server.loaders.connect_visits import ConnectVisitLoader
-from mcp_server.pipeline_registry import PipelineConfig
+from mcp_server.pipeline_registry import PipelineConfig, get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +101,6 @@ def run_pipeline(
         # has already stored metadata, and load can proceed without assets.
         if pipeline.provider == "commcare":
             try:
-                from apps.transformations.services.commcare_staging import upsert_system_assets
-
                 tenant_meta = TenantMetadata.objects.filter(
                     tenant_membership=tenant_membership
                 ).first()
@@ -156,8 +158,6 @@ def run_pipeline(
     transform_result: dict = {}
 
     # Check if there are any TransformationAssets to execute
-    from apps.transformations.models import TransformationAsset
-
     has_assets = TransformationAsset.objects.filter(tenant=tenant_membership.tenant).exists()
     if has_assets:
         report("Running transforms...")
@@ -225,8 +225,6 @@ def _run_discover_phase(
     tenant_membership: Any, credential: dict[str, str], pipeline: PipelineConfig
 ) -> None:
     """Fetch provider metadata and upsert into TenantMetadata."""
-    from django.utils import timezone
-
     if not pipeline.has_metadata_discovery:
         return
 
@@ -297,8 +295,6 @@ def _load_connect_source(
 
 def _run_transform_phase(pipeline: PipelineConfig, schema_name: str, tenant=None) -> dict:
     """Run the three-stage transformation pipeline using TransformationAsset records."""
-    from apps.transformations.services.executor import run_transformation_pipeline
-
     run = run_transformation_pipeline(
         tenant=tenant,
         schema_name=schema_name,
@@ -973,8 +969,6 @@ def _write_connect_completed_modules(
 
 def run_commcare_sync(tenant_membership: Any, credential: dict[str, str]) -> dict:
     """Legacy entry point — delegates to run_pipeline with the default registry."""
-    from mcp_server.pipeline_registry import get_registry
-
     pipeline = get_registry().get("commcare_sync")
     if pipeline is None:
         raise ValueError("commcare_sync pipeline not found in registry")

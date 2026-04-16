@@ -31,14 +31,19 @@ from django.core.exceptions import ValidationError as _ValidationError
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from apps.transformations.services.lineage import aget_lineage_chain
+from apps.users.models import TenantMembership
 from apps.users.services.credential_resolver import aresolve_credential
 from apps.workspaces.models import (
     MaterializationRun,
     SchemaState,
     TenantMetadata,
     TenantSchema,
+    Workspace,
+    WorkspaceTenant,
     WorkspaceViewSchema,
 )
+from apps.workspaces.services.schema_manager import SchemaManager
 from mcp_server.context import load_workspace_context
 from mcp_server.envelope import (
     AUTH_TOKEN_EXPIRED,
@@ -49,6 +54,8 @@ from mcp_server.envelope import (
     success_response,
     tool_context,
 )
+from mcp_server.loaders.commcare_base import CommCareAuthError
+from mcp_server.loaders.connect_base import ConnectAuthError
 from mcp_server.pipeline_registry import get_registry
 from mcp_server.services.materializer import run_pipeline
 from mcp_server.services.metadata import (
@@ -263,9 +270,6 @@ async def get_lineage(model_name: str, workspace_id: str = "") -> dict:
         model_name: Name of the model to trace lineage for.
         workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    from apps.transformations.services.lineage import aget_lineage_chain
-    from apps.workspaces.models import Workspace
-
     async with tool_context("get_lineage", workspace_id, model_name=model_name) as tc:
         if not workspace_id:
             tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
@@ -470,9 +474,6 @@ async def _materialize_tenant(
     Resolves credentials, builds a progress callback, and executes the pipeline.
     Returns the pipeline result dict on success, or raises on failure.
     """
-    from mcp_server.loaders.commcare_base import CommCareAuthError
-    from mcp_server.loaders.connect_base import ConnectAuthError
-
     tenant_id = tm.tenant.external_id
 
     # ── Resolve credential ────────────────────────────────────────────────
@@ -510,9 +511,6 @@ async def _materialize_tenant(
 
 async def _resolve_workspace_memberships(workspace_id, user_id):
     """Resolve TenantMemberships for all tenants in a workspace."""
-    from apps.users.models import TenantMembership
-    from apps.workspaces.models import Workspace, WorkspaceTenant
-
     workspace = await Workspace.objects.filter(id=workspace_id).afirst()
     if workspace is None:
         return None, f"Workspace '{workspace_id}' not found"
@@ -619,14 +617,6 @@ async def get_schema_status(workspace_id: str = "") -> dict:
     Args:
         workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    from apps.workspaces.models import (
-        MaterializationRun,
-        SchemaState,
-        TenantSchema,
-        Workspace,
-        WorkspaceViewSchema,
-    )
-
     async with tool_context("get_schema_status", workspace_id) as tc:
         if not workspace_id:
             tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
@@ -756,9 +746,6 @@ async def teardown_schema(confirm: bool = False, workspace_id: str = "") -> dict
         confirm: Must be True to execute. Defaults to False as a safety guard.
         workspace_id: Workspace UUID (injected server-side by the agent graph).
     """
-    from apps.workspaces.models import SchemaState, TenantSchema, WorkspaceViewSchema
-    from apps.workspaces.services.schema_manager import SchemaManager
-
     async with tool_context("teardown_schema", workspace_id, confirm=confirm) as tc:
         if not confirm:
             tc["result"] = error_response(
@@ -771,8 +758,6 @@ async def teardown_schema(confirm: bool = False, workspace_id: str = "") -> dict
         if not workspace_id:
             tc["result"] = error_response(VALIDATION_ERROR, "workspace_id is required")
             return tc["result"]
-
-        from apps.workspaces.models import Workspace
 
         workspace = await Workspace.objects.filter(id=workspace_id).afirst()
         if workspace is None:

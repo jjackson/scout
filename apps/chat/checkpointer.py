@@ -2,6 +2,11 @@
 
 import logging
 
+from django.conf import settings
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg_pool import AsyncConnectionPool
+
 from apps.agents.memory.checkpointer import get_database_url
 
 logger = logging.getLogger(__name__)
@@ -16,9 +21,6 @@ async def ensure_checkpointer(*, force_new: bool = False):
         return _checkpointer
 
     try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from psycopg_pool import AsyncConnectionPool
-
         database_url = get_database_url()
 
         if _pool is not None:
@@ -39,11 +41,7 @@ async def ensure_checkpointer(*, force_new: bool = False):
         await _checkpointer.setup()
         logger.info("PostgreSQL checkpointer initialized")
     except Exception as e:
-        from django.conf import settings
-
         if settings.DEBUG:
-            from langgraph.checkpoint.memory import MemorySaver
-
             logger.warning(
                 "PostgreSQL checkpointer unavailable, using MemorySaver (DEBUG only): %s", e
             )

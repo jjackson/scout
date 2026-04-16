@@ -10,12 +10,18 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
+from apps.users.adapters import encrypt_credential
 from apps.users.decorators import async_login_required
-from apps.users.models import Tenant, TenantMembership
+from apps.users.models import Tenant, TenantCredential, TenantMembership
+from apps.users.services.tenant_resolution import (
+    resolve_commcare_domains,
+    resolve_connect_opportunities,
+)
 from apps.users.services.tenant_verification import (
     CommCareVerificationError,
     verify_commcare_credential,
 )
+from apps.workspaces.models import Workspace
 
 TENANT_REFRESH_TTL = 3600  # seconds (1 hour)
 
@@ -46,8 +52,6 @@ async def tenant_list_view(request):
         access_token = await _aget_token_value(user, "commcare")
         if access_token:
             try:
-                from apps.users.services.tenant_resolution import resolve_commcare_domains
-
                 await resolve_commcare_domains(user, access_token)
                 await cache.aset(commcare_cache_key, True, TENANT_REFRESH_TTL)
             except Exception:
@@ -59,8 +63,6 @@ async def tenant_list_view(request):
         connect_token = await _aget_token_value(user, "commcare_connect")
         if connect_token:
             try:
-                from apps.users.services.tenant_resolution import resolve_connect_opportunities
-
                 await resolve_connect_opportunities(user, connect_token)
                 await cache.aset(connect_cache_key, True, TENANT_REFRESH_TTL)
             except Exception:
@@ -172,9 +174,6 @@ async def tenant_credential_list_view(request):
     except CommCareVerificationError as e:
         return JsonResponse({"error": str(e)}, status=400)
 
-    from apps.users.adapters import encrypt_credential
-    from apps.users.models import TenantCredential
-
     try:
         encrypted = encrypt_credential(credential)
     except ValueError as e:
@@ -249,8 +248,6 @@ async def tenant_credential_detail_view(request, membership_id):
     except CommCareVerificationError as e:
         return JsonResponse({"error": str(e)}, status=400)
 
-    from apps.users.adapters import encrypt_credential
-
     try:
         encrypted = encrypt_credential(credential)
     except ValueError as e:
@@ -299,10 +296,6 @@ async def tenant_ensure_view(request):
 
             # Resolve the user's actual opportunities from the Connect API
             # to verify they have access to the requested tenant_id.
-            from apps.users.services.tenant_resolution import (
-                resolve_connect_opportunities,
-            )
-
             memberships = await resolve_connect_opportunities(user, connect_token)
             tm = next((m for m in memberships if m.tenant.external_id == tenant_id), None)
             if tm is None:
@@ -317,8 +310,6 @@ async def tenant_ensure_view(request):
     await tm.asave(update_fields=["last_selected_at"])
 
     # Find the auto-created workspace for this tenant
-    from apps.workspaces.models import Workspace
-
     workspace = await Workspace.objects.filter(
         workspace_tenants__tenant=tm.tenant,
         memberships__user=user,

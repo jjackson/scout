@@ -45,7 +45,7 @@ class TestRunPipeline:
             patch("mcp_server.services.materializer.CommCareMetadataLoader") as mock_meta,
             patch("mcp_server.services.materializer.CommCareCaseLoader") as mock_cases,
             patch("mcp_server.services.materializer.get_managed_db_connection") as mock_conn,
-            patch("apps.transformations.models.TransformationAsset") as mock_asset_cls,
+            patch("mcp_server.services.materializer.TransformationAsset") as mock_asset_cls,
         ):
             schema = self._make_schema()
             mock_mgr.return_value.provision.return_value = schema
@@ -93,7 +93,7 @@ class TestRunPipeline:
             patch("mcp_server.services.materializer.CommCareMetadataLoader") as mock_meta,
             patch("mcp_server.services.materializer.CommCareCaseLoader") as mock_cases,
             patch("mcp_server.services.materializer.get_managed_db_connection") as mock_conn,
-            patch("apps.transformations.models.TransformationAsset") as mock_asset_cls,
+            patch("mcp_server.services.materializer.TransformationAsset") as mock_asset_cls,
         ):
             schema = self._make_schema()
             mock_mgr.return_value.provision.return_value = schema
@@ -146,7 +146,7 @@ class TestRunPipeline:
             patch("mcp_server.services.materializer.TenantMetadata") as mock_meta_model,
             patch("mcp_server.services.materializer.CommCareMetadataLoader") as mock_meta_loader,
             patch("mcp_server.services.materializer.get_managed_db_connection") as mock_conn,
-            patch("apps.transformations.models.TransformationAsset") as mock_asset_cls,
+            patch("mcp_server.services.materializer.TransformationAsset") as mock_asset_cls,
         ):
             schema = self._make_schema()
             mock_mgr.return_value.provision.return_value = schema
@@ -180,7 +180,7 @@ class TestRunPipeline:
             patch("mcp_server.services.materializer.TenantMetadata"),
             patch("mcp_server.services.materializer.CommCareMetadataLoader") as mock_meta,
             patch("mcp_server.services.materializer.get_managed_db_connection") as mock_conn,
-            patch("apps.transformations.models.TransformationAsset") as mock_asset_cls,
+            patch("mcp_server.services.materializer.TransformationAsset") as mock_asset_cls,
             patch("mcp_server.services.materializer._run_transform_phase") as mock_transform,
         ):
             schema = self._make_schema()

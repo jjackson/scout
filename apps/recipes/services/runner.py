@@ -7,15 +7,19 @@ sending it to the agent, and collecting results.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from asgiref.sync import async_to_sync
 from django.utils import timezone
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from apps.agents.graph.base import build_agent_graph
 from apps.recipes.models import Recipe, RecipeRun, RecipeRunStatus
+from apps.users.models import TenantMembership
+from apps.workspaces.models import WorkspaceTenant
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -99,9 +103,6 @@ class RecipeRunner:
             return self._provided_graph
 
         if self._graph is None:
-            from apps.users.models import TenantMembership
-            from apps.workspaces.models import WorkspaceTenant
-
             workspace_tenant = (
                 await WorkspaceTenant.objects.select_related("tenant")
                 .filter(workspace=self.recipe.workspace)
@@ -173,8 +174,6 @@ class RecipeRunner:
             if isinstance(msg, ToolMessage):
                 if msg.name in ("create_artifact", "update_artifact"):
                     try:
-                        import json
-
                         content = msg.content
                         if isinstance(content, str):
                             result = json.loads(content)
@@ -187,8 +186,6 @@ class RecipeRunner:
 
     def execute(self) -> RecipeRun:
         """Execute the recipe and return the RecipeRun record."""
-        from asgiref.sync import async_to_sync
-
         self.validate_variables()
 
         self._run = self._create_run_record()
@@ -302,10 +299,12 @@ class RecipeRunner:
         try:
             workspace = self.recipe.workspace
             # Fetch tenant info asynchronously to avoid sync query in async context
-            from apps.workspaces.models import WorkspaceTenant as _WT
-
-            _wt = await _WT.objects.select_related("tenant").filter(workspace=workspace).afirst()
-            _tenant = _wt.tenant if _wt else None
+            wt = (
+                await WorkspaceTenant.objects.select_related("tenant")
+                .filter(workspace=workspace)
+                .afirst()
+            )
+            _tenant = wt.tenant if wt else None
             initial_state = {
                 "messages": [HumanMessage(content=prompt)],
                 "tenant_id": _tenant.external_id if _tenant else "",

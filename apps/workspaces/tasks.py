@@ -7,8 +7,12 @@ from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
+from apps.users.models import TenantMembership
 from apps.users.services.credential_resolver import resolve_credential
+from apps.workspaces.models import SchemaState, TenantSchema, Workspace, WorkspaceViewSchema
 from apps.workspaces.services.schema_manager import SchemaManager
+from mcp_server.pipeline_registry import get_registry
+from mcp_server.services.materializer import run_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +24,6 @@ def refresh_tenant_schema(schema_id: str, membership_id: str) -> dict:
     On success: marks state=ACTIVE, schedules teardown of old active schemas.
     On failure: drops the new schema, marks state=FAILED.
     """
-    from apps.users.models import TenantMembership
-    from apps.workspaces.models import SchemaState, TenantSchema
-    from apps.workspaces.services.schema_manager import SchemaManager
-
     try:
         new_schema = TenantSchema.objects.select_related("tenant").get(id=schema_id)
     except TenantSchema.DoesNotExist:
@@ -53,9 +53,6 @@ def refresh_tenant_schema(schema_id: str, membership_id: str) -> dict:
         return {"error": "No credential available"}
 
     try:
-        from mcp_server.pipeline_registry import get_registry
-        from mcp_server.services.materializer import run_pipeline
-
         registry = get_registry()
         provider_pipeline_map = {p.provider: p.name for p in registry.list()}
         pipeline_name = provider_pipeline_map.get(membership.tenant.provider)
@@ -90,8 +87,6 @@ def refresh_tenant_schema(schema_id: str, membership_id: str) -> dict:
 
 def _drop_schema_and_fail(schema) -> None:
     """Drop the physical schema and mark the record as FAILED."""
-    from apps.workspaces.models import SchemaState
-
     try:
         SchemaManager().teardown(schema)
     except Exception:
@@ -107,8 +102,6 @@ def expire_inactive_schemas() -> None:
     Handles both TenantSchema and WorkspaceViewSchema records.
     Schemas with null last_accessed_at are never auto-expired.
     """
-    from apps.workspaces.models import SchemaState, TenantSchema, WorkspaceViewSchema
-
     cutoff = timezone.now() - timedelta(hours=settings.SCHEMA_TTL_HOURS)
 
     # Expire stale tenant schemas
@@ -139,8 +132,6 @@ def rebuild_workspace_view_schema(workspace_id: str) -> dict:
     On success: marks WorkspaceViewSchema.state = ACTIVE.
     On failure: marks state = FAILED and returns an error dict.
     """
-    from apps.workspaces.models import Workspace
-
     try:
         workspace = Workspace.objects.prefetch_related("tenants").get(id=workspace_id)
     except Workspace.DoesNotExist:
@@ -167,8 +158,6 @@ def rebuild_workspace_view_schema(workspace_id: str) -> dict:
 @shared_task
 def teardown_view_schema_task(view_schema_id: str) -> None:
     """Drop the physical PostgreSQL schema for a WorkspaceViewSchema and mark EXPIRED."""
-    from apps.workspaces.models import SchemaState, WorkspaceViewSchema
-
     try:
         vs = WorkspaceViewSchema.objects.get(id=view_schema_id)
     except WorkspaceViewSchema.DoesNotExist:
@@ -190,9 +179,6 @@ def teardown_view_schema_task(view_schema_id: str) -> None:
 @shared_task
 def teardown_schema(schema_id: str) -> None:
     """Drop a tenant schema in the managed database and mark it EXPIRED."""
-    from apps.workspaces.models import SchemaState, TenantSchema
-    from apps.workspaces.services.schema_manager import SchemaManager
-
     try:
         schema = TenantSchema.objects.get(id=schema_id)
     except TenantSchema.DoesNotExist:

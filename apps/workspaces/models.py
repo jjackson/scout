@@ -8,6 +8,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from django_pydantic_field import SchemaField
 
 
@@ -46,15 +47,11 @@ class TenantSchema(models.Model):
 
     def touch(self):
         """Call this on user-initiated actions to reset the inactivity TTL."""
-        from django.utils import timezone
-
         self.last_accessed_at = timezone.now()
         self.save(update_fields=["last_accessed_at"])
 
     async def atouch(self):
         """Async version of touch() — reset the inactivity TTL."""
-        from django.utils import timezone
-
         self.last_accessed_at = timezone.now()
         await self.asave(update_fields=["last_accessed_at"])
 
@@ -219,15 +216,11 @@ class WorkspaceViewSchema(models.Model):
 
     def touch(self):
         """Reset the inactivity TTL for this view schema."""
-        from django.utils import timezone
-
         self.last_accessed_at = timezone.now()
         self.save(update_fields=["last_accessed_at"])
 
     async def atouch(self):
         """Async version of touch() — reset the inactivity TTL."""
-        from django.utils import timezone
-
         self.last_accessed_at = timezone.now()
         await self.asave(update_fields=["last_accessed_at"])
 

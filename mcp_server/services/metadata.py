@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from django.db import models
 
+from apps.transformations.models import TransformationAsset
+from apps.transformations.services.lineage import aget_terminal_assets
 from apps.workspaces.models import MaterializationRun
 from mcp_server.pipeline_registry import PipelineConfig
 from mcp_server.services.query import _execute_async_parameterized
@@ -193,8 +195,6 @@ async def transformation_aware_list_tables(
     replace their upstream tables in the listing. Otherwise falls back
     to the standard pipeline_list_tables behavior.
     """
-    from apps.transformations.services.lineage import aget_terminal_assets
-
     terminal_assets = await aget_terminal_assets(tenant_ids, workspace_id)
 
     if not terminal_assets:
@@ -203,8 +203,6 @@ async def transformation_aware_list_tables(
 
     # Build set of replaced table names (walk replaces chains, scoped to
     # visible assets to prevent cross-tenant information disclosure).
-    from apps.transformations.models import TransformationAsset as _TA
-
     visible_q = models.Q(tenant_id__in=tenant_ids)
     if workspace_id:
         visible_q = visible_q | models.Q(workspace_id=workspace_id)
@@ -215,7 +213,7 @@ async def transformation_aware_list_tables(
         visited = set()
         while next_id and next_id not in visited:
             visited.add(next_id)
-            upstream = await _TA.objects.filter(visible_q, id=next_id).afirst()
+            upstream = await TransformationAsset.objects.filter(visible_q, id=next_id).afirst()
             if upstream is None:
                 break
             replaced_names.add(upstream.name)

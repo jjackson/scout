@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from django.conf import settings
+
+from apps.workspaces.models import SchemaState, TenantSchema, Workspace, WorkspaceViewSchema
+
 
 @dataclass(frozen=True)
 class QueryContext:
@@ -49,10 +53,6 @@ async def load_tenant_context(tenant_id: str) -> QueryContext:
 
     Raises ValueError if the tenant schema is not found or not active.
     """
-    from django.conf import settings
-
-    from apps.workspaces.models import SchemaState, TenantSchema
-
     ts = await TenantSchema.objects.filter(
         tenant__external_id=tenant_id,
         state__in=[SchemaState.ACTIVE, SchemaState.MATERIALIZING],
@@ -89,10 +89,6 @@ async def load_workspace_context(workspace_id: str) -> QueryContext:
     Raises ValueError if the workspace has no tenants, or if multi-tenant and
     no active WorkspaceViewSchema exists.
     """
-    from django.conf import settings
-
-    from apps.workspaces.models import SchemaState, Workspace, WorkspaceViewSchema
-
     try:
         workspace = await Workspace.objects.aget(id=workspace_id)
     except Workspace.DoesNotExist:

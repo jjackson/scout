@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 import psycopg
+import psycopg.errors
 from psycopg import sql as psql
 
 from mcp_server.context import QueryContext
@@ -146,9 +147,6 @@ async def execute_query(ctx: QueryContext, sql: str) -> dict[str, Any]:
 
 def _classify_error(exc: Exception) -> tuple[str, str]:
     """Classify a database exception into an error code and user-safe message."""
-    import psycopg
-    import psycopg.errors
-
     if isinstance(exc, psycopg.errors.QueryCanceled):
         return QUERY_TIMEOUT, "Query timed out. Consider adding filters or limiting the data range."
 

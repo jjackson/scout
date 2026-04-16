@@ -13,11 +13,14 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.db.models import Q
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views import View
 
+from apps.common.utils import creator_display_name
 from apps.users.decorators import LoginRequiredJsonMixin
+from apps.workspaces.models import TenantSchema
 from apps.workspaces.workspace_resolver import aresolve_workspace, resolve_workspace
 from mcp_server.context import load_tenant_context
 from mcp_server.services.query import execute_query
@@ -710,8 +713,6 @@ class ArtifactQueryDataView(View):
     """
 
     async def get(self, request: HttpRequest, workspace_id, artifact_id: str) -> JsonResponse:
-        from django.http import Http404
-
         user = await request.auser()
         if not user.is_authenticated:
             return JsonResponse({"error": "Authentication required"}, status=401)
@@ -748,8 +749,6 @@ class ArtifactQueryDataView(View):
             return JsonResponse({"queries": results, "static_data": artifact.data or {}})
 
         # Touch the schema to reset the inactivity TTL on user-initiated queries
-        from apps.workspaces.models import TenantSchema
-
         ts = await TenantSchema.objects.filter(schema_name=ctx.schema_name).afirst()
         if ts is not None:
             await ts.atouch()
@@ -796,16 +795,12 @@ class ArtifactListView(LoginRequiredJsonMixin, View):
         if err:
             return err
 
-        from django.db.models import Q
-
         search = request.GET.get("search", "").strip()
         queryset = Artifact.objects.filter(workspace=workspace)
         if search:
             queryset = queryset.filter(
                 Q(title__icontains=search) | Q(description__icontains=search)
             )
-
-        from apps.common.utils import creator_display_name
 
         results = [
             {

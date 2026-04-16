@@ -10,11 +10,20 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.knowledge.models import TableKnowledge
 from apps.users.models import TenantMembership
-from apps.workspaces.models import SchemaState, TenantSchema, WorkspaceRole
-from apps.workspaces.services.schema_manager import SchemaManager
+from apps.workspaces.models import (
+    MaterializationRun,
+    SchemaState,
+    TenantMetadata,
+    TenantSchema,
+    WorkspaceRole,
+)
+from apps.workspaces.services.schema_manager import SchemaManager, get_managed_db_connection
 from apps.workspaces.tasks import refresh_tenant_schema
 from apps.workspaces.workspace_resolver import resolve_workspace_drf as resolve_workspace
+from mcp_server.pipeline_registry import get_registry
+from mcp_server.services.metadata import pipeline_list_tables
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +75,6 @@ def _get_all_columns(schema_name: str) -> dict[str, list[dict]]:
     Returns a mapping of table_name → list of column dicts.
     Returns an empty dict on any connection error.
     """
-    from apps.workspaces.services.schema_manager import get_managed_db_connection
-
     try:
         conn = get_managed_db_connection()
         try:
@@ -105,8 +112,6 @@ def _get_table_columns(schema_name: str, table_name: str) -> list[dict]:
 
     Returns an empty list on any connection error or if the table doesn't exist.
     """
-    from apps.workspaces.services.schema_manager import get_managed_db_connection
-
     try:
         conn = get_managed_db_connection()
         try:
@@ -187,8 +192,6 @@ def _build_source_metadata(table_name: str, tenant_metadata) -> dict | None:
 
 def _get_tenant_metadata(tenant):
     """Return TenantMetadata for any membership in the given tenant, or None."""
-    from apps.workspaces.models import TenantMetadata
-
     return TenantMetadata.objects.filter(tenant_membership__tenant=tenant).first()
 
 
@@ -211,8 +214,6 @@ def _serialize_annotation(tk):
 
 def _get_annotation(workspace, table_name):
     """Return serialized TableKnowledge annotation for a table, or None."""
-    from apps.knowledge.models import TableKnowledge
-
     try:
         tk = TableKnowledge.objects.get(workspace=workspace, table_name=table_name)
         return _serialize_annotation(tk)
@@ -248,10 +249,6 @@ class DataDictionaryView(APIView):
         return self._get_from_pipeline(workspace, tenant_schema)
 
     def _get_from_pipeline(self, workspace, tenant_schema):
-        from apps.workspaces.models import MaterializationRun
-        from mcp_server.pipeline_registry import get_registry
-        from mcp_server.services.metadata import pipeline_list_tables
-
         last_run = (
             MaterializationRun.objects.filter(
                 tenant_schema=tenant_schema,
@@ -424,9 +421,6 @@ class TableDetailView(APIView):
         """Return table data from pipeline models, or None if not found or hidden."""
         if table_name.startswith("stg_"):
             return None
-        from apps.workspaces.models import MaterializationRun
-        from mcp_server.pipeline_registry import get_registry
-        from mcp_server.services.metadata import pipeline_list_tables
 
         last_run = (
             MaterializationRun.objects.filter(
@@ -493,8 +487,6 @@ class TableDetailView(APIView):
         table_data = self._get_table_data(workspace, workspace.tenant, qualified_name)
         if table_data is None:
             return Response({"error": "Table not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        from apps.knowledge.models import TableKnowledge
 
         data = request.data
 
