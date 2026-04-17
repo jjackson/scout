@@ -46,18 +46,26 @@ class WorkspaceListView(APIView):
         )
         results = []
         for m in memberships:
+            workspace_tenants = list(m.workspace.workspace_tenants.all())
             tenants = [
                 {
                     "id": str(wt.tenant.id),
                     "tenant_name": wt.tenant.canonical_name,
                     "provider": wt.tenant.provider,
                 }
-                for wt in m.workspace.workspace_tenants.all()
+                for wt in workspace_tenants
             ]
+            first_tenant = workspace_tenants[0].tenant if workspace_tenants else None
+            display_name = (
+                first_tenant.format_display_name(m.workspace.name)
+                if first_tenant
+                else m.workspace.name
+            )
             results.append(
                 {
                     "id": str(m.workspace.id),
                     "name": m.workspace.name,
+                    "display_name": display_name,
                     "is_auto_created": m.workspace.is_auto_created,
                     "role": m.role,
                     "tenants": tenants,
@@ -94,8 +102,11 @@ class WorkspaceListView(APIView):
             created_by=request.user,
         )
         tenants = []
+        first_tenant = None
         for tenant in Tenant.objects.filter(id__in=tenant_ids):
             WorkspaceTenant.objects.create(workspace=workspace, tenant=tenant)
+            if first_tenant is None:
+                first_tenant = tenant
             tenants.append(
                 {
                     "id": str(tenant.id),
@@ -110,10 +121,14 @@ class WorkspaceListView(APIView):
             role=WorkspaceRole.MANAGE,
         )
 
+        display_name = (
+            first_tenant.format_display_name(workspace.name) if first_tenant else workspace.name
+        )
         return Response(
             {
                 "id": str(workspace.id),
                 "name": workspace.name,
+                "display_name": display_name,
                 "is_auto_created": workspace.is_auto_created,
                 "role": WorkspaceRole.MANAGE,
                 "tenants": tenants,
@@ -162,10 +177,15 @@ class WorkspaceDetailView(APIView):
             except WorkspaceViewSchema.DoesNotExist:
                 schema_status = "provisioning"
 
+        first_tenant = tenants[0] if tenants else None
+        display_name = (
+            first_tenant.format_display_name(workspace.name) if first_tenant else workspace.name
+        )
         return Response(
             {
                 "id": str(workspace.id),
                 "name": workspace.name,
+                "display_name": display_name,
                 "is_auto_created": workspace.is_auto_created,
                 "role": membership.role,
                 "system_prompt": workspace.system_prompt,
@@ -200,7 +220,13 @@ class WorkspaceDetailView(APIView):
             workspace.system_prompt = system_prompt
 
         workspace.save(update_fields=["name", "system_prompt", "updated_at"])
-        return Response({"id": str(workspace.id), "name": workspace.name})
+        return Response(
+            {
+                "id": str(workspace.id),
+                "name": workspace.name,
+                "display_name": workspace.display_name,
+            }
+        )
 
     def delete(self, request, workspace_id):
         workspace, membership, err = resolve_workspace(request, workspace_id)
