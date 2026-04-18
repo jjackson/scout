@@ -22,6 +22,7 @@ from apps.users.services.credential_resolver import aget_social_token
 from apps.users.services.tenant_resolution import (
     resolve_commcare_domains,
     resolve_connect_opportunities,
+    resolve_ocs_chatbots,
 )
 from apps.users.services.token_refresh import get_token_url
 
@@ -34,6 +35,7 @@ PROVIDER_DISPLAY = {
     "github": "GitHub",
     "commcare": "CommCare",
     "commcare_connect": "CommCare Connect",
+    "ocs": "Open Chat Studio",
 }
 
 
@@ -90,7 +92,8 @@ async def me_view(request):
         connect_ok = await _atry_resolve_provider(
             user, "commcare_connect", resolve_connect_opportunities, "Connect"
         )
-        onboarding_complete = commcare_ok or connect_ok
+        ocs_ok = await _atry_resolve_provider(user, "ocs", resolve_ocs_chatbots, "OCS")
+        onboarding_complete = commcare_ok or connect_ok or ocs_ok
 
     return JsonResponse(_user_response(user, onboarding_complete=onboarding_complete))
 

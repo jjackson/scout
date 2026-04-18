@@ -58,6 +58,13 @@ def resolve_tenant_on_social_login(request, sociallogin, **kwargs):
             resolve_connect_opportunities(sociallogin.user, token.token)
         except Exception:
             logger.warning("Failed to resolve Connect opportunities after OAuth", exc_info=True)
+    elif provider == "ocs":
+        try:
+            from apps.users.services.tenant_resolution import resolve_ocs_chatbots
+
+            resolve_ocs_chatbots(sociallogin.user, token.token)
+        except Exception:
+            logger.warning("Failed to resolve OCS chatbots after OAuth", exc_info=True)
     elif provider.startswith("commcare"):
         try:
             from apps.users.services.tenant_resolution import resolve_commcare_domains
