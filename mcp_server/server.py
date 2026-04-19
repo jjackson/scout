@@ -32,7 +32,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from apps.transformations.services.lineage import aget_lineage_chain
-from apps.users.models import TenantMembership
+from apps.users.models import Tenant, TenantMembership
 from apps.users.services.credential_resolver import aresolve_credential
 from apps.workspaces.models import (
     MaterializationRun,
@@ -76,6 +76,23 @@ async def _resolve_mcp_context(workspace_id: str):
     if not workspace_id:
         raise ValueError("workspace_id is required")
     return await load_workspace_context(workspace_id)
+
+
+async def _resolve_pipeline_config(ts, last_run):
+    """Pick the right PipelineConfig for a TenantSchema.
+
+    Prefers the pipeline of the last completed materialization run; falls back
+    to the pipeline registered for the tenant's provider; falls back to
+    ``commcare_sync`` as a last resort to preserve historical behavior.
+    """
+    registry = get_registry()
+    if last_run:
+        cfg = registry.get(last_run.pipeline)
+        if cfg:
+            return cfg
+    tenant = await Tenant.objects.aget(id=ts.tenant_id)
+    cfg = registry.get_by_provider(tenant.provider)
+    return cfg or registry.get("commcare_sync")
 
 
 # --- Tools ---
@@ -130,8 +147,7 @@ async def list_tables(workspace_id: str = "") -> dict:
             .order_by("-completed_at")
             .afirst()
         )
-        pipeline_name = last_run.pipeline if last_run else "commcare_sync"
-        pipeline_config = get_registry().get(pipeline_name) or get_registry().get("commcare_sync")
+        pipeline_config = await _resolve_pipeline_config(ts, last_run)
 
         tables = await pipeline_list_tables(ts, pipeline_config)
 
@@ -183,8 +199,7 @@ async def describe_table(table_name: str, workspace_id: str = "") -> dict:
                 tenant_membership__tenant_id=ts.tenant_id
             ).afirst()
 
-        pipeline_name = last_run.pipeline if last_run else "commcare_sync"
-        pipeline_config = get_registry().get(pipeline_name) or get_registry().get("commcare_sync")
+        pipeline_config = await _resolve_pipeline_config(ts, last_run)
 
         table = await pipeline_describe_table(table_name, ctx, tenant_metadata, pipeline_config)
         if table is None:
@@ -235,8 +250,7 @@ async def get_metadata(workspace_id: str = "") -> dict:
             .order_by("-completed_at")
             .afirst()
         )
-        pipeline_name = last_run.pipeline if last_run else "commcare_sync"
-        pipeline_config = get_registry().get(pipeline_name) or get_registry().get("commcare_sync")
+        pipeline_config = await _resolve_pipeline_config(ts, last_run)
 
         tenant_metadata = await TenantMetadata.objects.filter(
             tenant_membership__tenant_id=ts.tenant_id
