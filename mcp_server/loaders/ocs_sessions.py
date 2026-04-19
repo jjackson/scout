@@ -31,9 +31,17 @@ class OCSSessionLoader(OCSBaseLoader):
 
 def _map_session(raw: dict) -> dict:
     participant = raw.get("participant") or {}
+    # OCS returns "experiment" as a nested object {id, name, url, ...} on
+    # the list endpoint; extract just the id. Fall back to the raw value if
+    # it's already a string (defensive).
+    experiment = raw.get("experiment")
+    if isinstance(experiment, dict):
+        experiment_id = str(experiment.get("id") or "")
+    else:
+        experiment_id = str(experiment or "")
     return {
         "session_id": str(raw.get("id") or ""),
-        "experiment_id": str(raw.get("experiment") or ""),
+        "experiment_id": experiment_id,
         "participant_identifier": participant.get("identifier") or "",
         "participant_platform": participant.get("platform") or "",
         "created_at": raw.get("created_at"),

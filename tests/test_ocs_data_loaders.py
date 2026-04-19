@@ -67,6 +67,33 @@ def test_session_loader_paginates_and_filters_by_experiment():
         ]
 
 
+def test_session_loader_extracts_experiment_id_from_nested_object():
+    """OCS list endpoint returns 'experiment' as a nested object — extract the id."""
+    loader = OCSSessionLoader(experiment_id="exp-1", credential=CREDENTIAL, base_url=BASE_URL)
+    page = MagicMock(status_code=200)
+    page.json.return_value = {
+        "results": [
+            {
+                "id": "sess-1",
+                "experiment": {
+                    "id": "exp-1",
+                    "name": "Test Bot",
+                    "url": "https://x/api/experiments/exp-1/",
+                    "version_number": 3,
+                },
+                "participant": {"identifier": "p1", "platform": "", "remote_id": ""},
+                "created_at": "2026-04-01T00:00:00Z",
+                "updated_at": "2026-04-01T01:00:00Z",
+                "tags": [],
+            }
+        ],
+        "next": None,
+    }
+    with patch.object(loader._session, "get", return_value=page):
+        rows = [r for pg in loader.load_pages() for r in pg]
+        assert rows[0]["experiment_id"] == "exp-1"
+
+
 def test_message_loader_flattens_messages_with_composite_pk():
     loader = OCSMessageLoader(experiment_id="exp-1", credential=CREDENTIAL, base_url=BASE_URL)
     sessions_page = MagicMock(status_code=200)
